@@ -1,14 +1,11 @@
-use gst::glib;
+use gst::{glib, info};
 use gst_base::subclass::prelude::*;
-
-use std::i32;
-use std::sync::Mutex;
 
 use once_cell::sync::Lazy;
 
 static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
     gst::DebugCategory::new(
-        "webrtcbin",
+        "webrtcredux",
         gst::DebugColorFlags::empty(),
         Some("WebRTC Video and Audio Transmitter"),
     )
@@ -23,7 +20,7 @@ impl WebRtcRedux {}
 impl ObjectSubclass for WebRtcRedux {
     const NAME: &'static str = "WebRtcRedux";
     type Type = super::WebRtcRedux;
-    type ParentType = gst_base::BaseTransform;
+    type ParentType = gst_base::BaseSink;
 }
 
 impl ObjectImpl for WebRtcRedux {}
@@ -74,13 +71,10 @@ impl ElementImpl for WebRtcRedux {
 
 impl GstObjectImpl for WebRtcRedux {}
 
-impl BaseTransformImpl for WebRtcRedux {
-    const MODE: gst_base::subclass::BaseTransformMode =
-        gst_base::subclass::BaseTransformMode::NeverInPlace;
-    const PASSTHROUGH_ON_SAME_CAPS: bool = false;
-    const TRANSFORM_IP_ON_PASSTHROUGH: bool = false;
+impl BaseSinkImpl for WebRtcRedux {
+    fn start(&self, element: &Self::Type) -> Result<(), gst::ErrorMessage> {
 
-    fn set_caps(&self, element: &Self::Type, incaps: &gst::Caps, outcaps: &gst::Caps) -> Result<(), gst::LoggableError> {
+        info!(CAT, "Started");
         Ok(())
     }
 
@@ -88,11 +82,8 @@ impl BaseTransformImpl for WebRtcRedux {
         Ok(())
     }
 
-    fn unit_size(&self, element: &Self::Type, caps: &gst::Caps) -> Option<usize> {
-        None
-    }
-
-    fn transform_caps(&self, element: &Self::Type, direction: gst::PadDirection, caps: &gst::Caps, filter: Option<&gst::Caps>) -> Option<gst::Caps> {
-        None
+    /// Takes data and processes it
+    fn render(&self, element: &Self::Type, buffer: &gst::Buffer) -> Result<gst::FlowSuccess, gst::FlowError> {
+        Ok(gst::FlowSuccess::Ok)
     }
 }
