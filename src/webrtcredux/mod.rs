@@ -8,5 +8,5 @@ glib::wrapper! {
 }
 
 pub fn register(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
-    gst::Element::register(Some(plugin), "webrtcredux", gst::Rank::None, WebRtcRedux::static_type())
+    gst::Element::register(Some(plugin), "webrtcredux", gst::Rank::Primary, WebRtcRedux::static_type())
 }
