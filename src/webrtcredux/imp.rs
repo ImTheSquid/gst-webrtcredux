@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use gst::{debug, error, glib, info, prelude::PadExtManual, trace, traits::{ElementExt, GstObjectExt}};
@@ -12,6 +14,9 @@ use webrtc::api::media_engine::{MediaEngine, MIME_TYPE_G722, MIME_TYPE_H264, MIM
 pub use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 
+use std::str::FromStr;
+use strum_macros::EnumString;
+
 use crate::glib::{ParamSpec, StaticType, ToValue, Value};
 use crate::glib::subclass::Signal;
 
@@ -23,43 +28,23 @@ static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
     )
 });
 
+#[derive(Debug, PartialEq, EnumString)]
 enum MediaType {
+    #[strum(ascii_case_insensitive, serialize = "video/H264", serialize = "video/x-h264")]
     H264,
+    #[strum(ascii_case_insensitive, serialize = "video/VP8")]
     VP8,
+    #[strum(ascii_case_insensitive, serialize = "video/VP9")]
     VP9,
+    #[strum(ascii_case_insensitive, serialize = "audio/opus", serialize = "audio/x-opus")]
     Opus,
+    #[strum(ascii_case_insensitive, serialize = "audio/G722")]
     G722,
+    #[strum(ascii_case_insensitive, serialize = "audio/PCMU", serialize = "audio/x-mulaw")]
     Mulaw,
+    #[strum(ascii_case_insensitive, serialize = "audio/PCMA", serialize = "audio/alaw")]
     Alaw,
 }
-
-impl MediaType {
-    fn from_mime(mime: &str) -> MediaType {
-        match mime {
-            "video/x-h264" => MediaType::H264,
-            "video/VP8" => MediaType::VP8,
-            "video/VP9" => MediaType::VP9,
-            "audio/x-opus" => MediaType::Opus,
-            "audio/G722" => MediaType::G722,
-            "audio/x-mulaw" => MediaType::Mulaw,
-            "audio/alaw" => MediaType::Alaw,
-            _ => unreachable!("Something's very wrong!")
-        }
-    }
-
-    fn to_webrtcrs_mime(&self) -> &'static str {
-        match self {
-            MediaType::H264 => MIME_TYPE_H264,
-            MediaType::VP8 => MIME_TYPE_VP8,
-            MediaType::VP9 => MIME_TYPE_VP9,
-            MediaType::Opus => MIME_TYPE_OPUS,
-            MediaType::G722 => MIME_TYPE_G722,
-            MediaType::Mulaw => MIME_TYPE_PCMU,
-            MediaType::Alaw => MIME_TYPE_PCMA,
-        }
-    }
-}
-
 
 enum MediaState {
     NotConfigured,
@@ -196,7 +181,7 @@ impl ElementImpl for WebRtcRedux {
                         let structure = event.structure().unwrap();
                         if structure.name() == "GstEventCaps" {
                             let mime = structure.get::<gst::Caps>("caps").unwrap().structure(0).unwrap().name();
-                            state.lock().unwrap().as_mut().unwrap().video_state = Some(MediaState::Configured { media_type: MediaType::from_mime(mime) });
+                            state.lock().unwrap().as_mut().unwrap().video_state = Some(MediaState::Configured { media_type: MediaType::from_str(mime).expect("Failed to parse mime type") });
                             debug!(CAT, "Video media type set to: {}", mime);
                         }
                         true
@@ -233,7 +218,7 @@ impl ElementImpl for WebRtcRedux {
                         let structure = event.structure().unwrap();
                         if structure.name() == "GstEventCaps" {
                             let mime = structure.get::<gst::Caps>("caps").unwrap().structure(0).unwrap().name();
-                            state.lock().unwrap().as_mut().unwrap().audio_state = Some(MediaState::Configured { media_type: MediaType::from_mime(mime) });
+                            state.lock().unwrap().as_mut().unwrap().audio_state = Some(MediaState::Configured { media_type: MediaType::from_str(mime).expect("Failed to parse mime type") });
                             debug!(CAT, "Audio media type set to: {}", mime);
                         }
                         true
