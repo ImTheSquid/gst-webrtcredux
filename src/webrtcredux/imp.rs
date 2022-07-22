@@ -1,8 +1,13 @@
-use gst::{glib, info, debug, traits::{ElementExt, GstObjectExt}, prelude::PadExtManual, trace};
-use gst_base::subclass::prelude::*;
 use std::sync::{Arc, Mutex};
 
+use gst::{debug, error, glib, info, prelude::PadExtManual, trace, traits::{ElementExt, GstObjectExt}};
+
+use gst_base::subclass::prelude::*;
+
 use once_cell::sync::Lazy;
+
+use crate::glib::{ParamSpec, StaticType, ToValue, Value};
+use crate::glib::subclass::Signal;
 
 static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
     gst::DebugCategory::new(
@@ -16,10 +21,10 @@ enum MediaType {
     H264,
     VP8,
     VP9,
-    OPUS,
+    Opus,
     G722,
-    MULAW,
-    ALAW
+    Mulaw,
+    Alaw,
 }
 
 impl MediaType {
@@ -28,10 +33,10 @@ impl MediaType {
             "video/x-h264" => MediaType::H264,
             "video/VP8" => MediaType::VP8,
             "video/VP9" => MediaType::VP9,
-            "audio/x-opus" => MediaType::OPUS,
+            "audio/x-opus" => MediaType::Opus,
             "audio/G722" => MediaType::G722,
-            "audio/x-mulaw" => MediaType::MULAW,
-            "audio/alaw" => MediaType::ALAW,
+            "audio/x-mulaw" => MediaType::Mulaw,
+            "audio/alaw" => MediaType::Alaw,
             _ => unreachable!("Something's very wrong!")
         }
     }
@@ -39,17 +44,20 @@ impl MediaType {
 
 enum MediaState {
     NotConfigured,
-    Configured { media_type: MediaType }
+    Configured { media_type: MediaType },
 }
 
 struct State {
     video_state: Option<MediaState>,
-    audio_state: Option<MediaState>
+    audio_state: Option<MediaState>,
+    //media_engine: MediaEngine,
+    //registry: Registry,
+    //config: RTCConfiguration,
 }
 
 #[derive(Default)]
 pub struct WebRtcRedux {
-    state: Arc<Mutex<Option<State>>>
+    state: Arc<Mutex<Option<State>>>,
 }
 
 impl WebRtcRedux {}
@@ -61,19 +69,51 @@ impl ObjectSubclass for WebRtcRedux {
     type ParentType = gst_base::BaseSink;
 
     fn with_class(_klass: &Self::Class) -> Self {
-        Self { state: Arc::new(Mutex::new(Some(State{ video_state: None, audio_state: None }))) }
+        Self { state: Arc::new(Mutex::new(Some(State { video_state: None, audio_state: None }))) }
     }
 }
 
-impl ObjectImpl for WebRtcRedux {}
+impl ObjectImpl for WebRtcRedux {
+    fn properties() -> &'static [ParamSpec] {
+        static PROPERTIES: Lazy<Vec<ParamSpec>> = Lazy::new(|| {
+            vec![
+                glib::ParamSpecBoxed::new(
+                    "ice-servers",
+                    "Ice Servers",
+                    "The list of ICE servers TURN and STUN",
+                    Vec::<String>::static_type(),
+                    glib::ParamFlags::WRITABLE,
+                )
+            ]
+        });
+
+        PROPERTIES.as_ref()
+    }
+
+    fn set_property(&self, obj: &Self::Type, id: usize, value: &Value, pspec: &ParamSpec) {
+        match pspec.name() {
+            "ice-servers" => {
+                info!(CAT, "aaaaa: {:?}", value.get::<Vec<String>>().expect("type checked upstream"));
+            }
+
+            _ => unimplemented!(),
+        };
+    }
+
+    fn property(&self, _obj: &Self::Type, _id: usize, _pspec: &ParamSpec) -> Value {
+        info!(CAT, "propertycalled");
+        "".to_value()
+    }
+}
+
 impl ElementImpl for WebRtcRedux {
     fn metadata() -> Option<&'static gst::subclass::ElementMetadata> {
         static ELEMENT_METADATA: Lazy<gst::subclass::ElementMetadata> = Lazy::new(|| {
             gst::subclass::ElementMetadata::new(
                 "WebRTC Broadcast Engine",
-            "Sink/Video/Audio",
-            "Broadcasts encoded video and audio",
-            "Jack Hogan"
+                "Sink/Video/Audio",
+                "Broadcasts encoded video and audio",
+                "Jack Hogan",
             )
         });
 
@@ -82,29 +122,36 @@ impl ElementImpl for WebRtcRedux {
 
     fn pad_templates() -> &'static [gst::PadTemplate] {
         static PAD_TEMPLATES: Lazy<Vec<gst::PadTemplate>> = Lazy::new(|| {
+            //MIME_TYPE_H264
             let mut video_caps = gst::Caps::new_empty_simple("video/x-h264");
             let video_caps = video_caps.get_mut().unwrap();
+            //MIME_TYPE_VP8
             video_caps.append(gst::Caps::new_empty_simple("video/VP8"));
+            //MIME_TYPE_VP9
             video_caps.append(gst::Caps::new_empty_simple("video/VP9"));
 
             let video_sink = gst::PadTemplate::new(
-                "video", 
-                gst::PadDirection::Sink, 
+                "video",
+                gst::PadDirection::Sink,
                 gst::PadPresence::Request,
-                &video_caps.to_owned()
+                &video_caps.to_owned(),
             ).unwrap();
 
+            //MIME_TYPE_OPUS
             let mut audio_caps = gst::Caps::new_empty_simple("audio/x-opus");
             let audio_caps = audio_caps.get_mut().unwrap();
+            //MIME_TYPE_G722
             audio_caps.append(gst::Caps::new_empty_simple("audio/G722"));
+            //MIME_TYPE_PCMU
             audio_caps.append(gst::Caps::new_empty_simple("audio/x-mulaw"));
+            //MIME_TYPE_PCMA
             audio_caps.append(gst::Caps::new_empty_simple("audio/alaw"));
 
             let audio_sink = gst::PadTemplate::new(
-                "audio", 
-                gst::PadDirection::Sink, 
+                "audio",
+                gst::PadDirection::Sink,
                 gst::PadPresence::Request,
-                &audio_caps.to_owned()
+                &audio_caps.to_owned(),
             ).unwrap();
 
             vec![video_sink, audio_sink]
@@ -132,11 +179,11 @@ impl ElementImpl for WebRtcRedux {
                 let pad = gst::Pad::from_template(templ, Some("video"));
                 unsafe {
                     let state = self.state.clone();
-                    pad.set_event_function(move|_pad, _parent, event| {
+                    pad.set_event_function(move |_pad, _parent, event| {
                         let structure = event.structure().unwrap();
                         if structure.name() == "GstEventCaps" {
                             let mime = structure.get::<gst::Caps>("caps").unwrap().structure(0).unwrap().name();
-                            state.lock().unwrap().as_mut().unwrap().video_state = Some(MediaState::Configured { media_type: MediaType::from_mime(mime)});
+                            state.lock().unwrap().as_mut().unwrap().video_state = Some(MediaState::Configured { media_type: MediaType::from_mime(mime) });
                             debug!(CAT, "Video media type set to: {}", mime);
                         }
                         true
@@ -155,7 +202,7 @@ impl ElementImpl for WebRtcRedux {
                 state.video_state = Some(MediaState::NotConfigured);
 
                 Some(pad)
-            },
+            }
             "audio" => {
                 if state.audio_state.is_some() {
                     debug!(
@@ -169,11 +216,11 @@ impl ElementImpl for WebRtcRedux {
                 let pad = gst::Pad::from_template(templ, Some("audio"));
                 unsafe {
                     let state = self.state.clone();
-                    pad.set_event_function(move|_pad, _parent, event| {
+                    pad.set_event_function(move |_pad, _parent, event| {
                         let structure = event.structure().unwrap();
                         if structure.name() == "GstEventCaps" {
                             let mime = structure.get::<gst::Caps>("caps").unwrap().structure(0).unwrap().name();
-                            state.lock().unwrap().as_mut().unwrap().audio_state = Some(MediaState::Configured { media_type: MediaType::from_mime(mime)});
+                            state.lock().unwrap().as_mut().unwrap().audio_state = Some(MediaState::Configured { media_type: MediaType::from_mime(mime) });
                             debug!(CAT, "Audio media type set to: {}", mime);
                         }
                         true
@@ -192,7 +239,7 @@ impl ElementImpl for WebRtcRedux {
                 state.audio_state = Some(MediaState::NotConfigured);
 
                 Some(pad)
-            },
+            }
             _ => {
                 debug!(CAT, obj: element, "Requested pad is not audio or video");
                 None
@@ -201,7 +248,7 @@ impl ElementImpl for WebRtcRedux {
     }
 
     fn release_pad(&self, element: &Self::Type, pad: &gst::Pad) {
-        let _ = if pad.name() == "video" {
+        if pad.name() == "video" {
             self.state.lock().unwrap().as_mut().unwrap().video_state.take();
         } else {
             self.state.lock().unwrap().as_mut().unwrap().audio_state.take();
@@ -224,6 +271,8 @@ impl BaseSinkImpl for WebRtcRedux {
     }
 
     fn stop(&self, _element: &Self::Type) -> Result<(), gst::ErrorMessage> {
+        //Drop state
+        self.state.lock().unwrap().take();
         info!(CAT, "Stopped");
         Ok(())
     }
