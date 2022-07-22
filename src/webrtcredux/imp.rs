@@ -3,8 +3,12 @@ use std::sync::{Arc, Mutex};
 use gst::{debug, error, glib, info, prelude::PadExtManual, trace, traits::{ElementExt, GstObjectExt}};
 
 use gst_base::subclass::prelude::*;
+use interceptor::registry::Registry;
 
 use once_cell::sync::Lazy;
+use webrtc::api::media_engine::MediaEngine;
+pub use webrtc::ice_transport::ice_server::RTCIceServer;
+use webrtc::peer_connection::configuration::RTCConfiguration;
 
 use crate::glib::{ParamSpec, StaticType, ToValue, Value};
 use crate::glib::subclass::Signal;
@@ -42,17 +46,22 @@ impl MediaType {
     }
 }
 
+
 enum MediaState {
     NotConfigured,
     Configured { media_type: MediaType },
 }
 
+struct WebRtcState {
+    media_engine: MediaEngine,
+    registry: Registry,
+    config: RTCConfiguration,
+}
+
 struct State {
     video_state: Option<MediaState>,
     audio_state: Option<MediaState>,
-    //media_engine: MediaEngine,
-    //registry: Registry,
-    //config: RTCConfiguration,
+    webrtc_state: Mutex<Option<WebRtcState>>,
 }
 
 #[derive(Default)]
@@ -60,7 +69,16 @@ pub struct WebRtcRedux {
     state: Arc<Mutex<Option<State>>>,
 }
 
-impl WebRtcRedux {}
+impl WebRtcRedux {
+    pub fn add_ice_servers(&self, mut ice_server: Vec<RTCIceServer>) {
+        let mut state_lock = self.state.lock().unwrap();
+        let state = state_lock.as_mut().unwrap();
+        let mut webrtc_state_lock = state.webrtc_state.lock().unwrap();
+        let mut webrtc_state = webrtc_state_lock.as_mut().unwrap();
+
+        webrtc_state.config.ice_servers.append(&mut ice_server);
+    }
+}
 
 #[glib::object_subclass]
 impl ObjectSubclass for WebRtcRedux {
@@ -69,42 +87,17 @@ impl ObjectSubclass for WebRtcRedux {
     type ParentType = gst_base::BaseSink;
 
     fn with_class(_klass: &Self::Class) -> Self {
-        Self { state: Arc::new(Mutex::new(Some(State { video_state: None, audio_state: None }))) }
+        let webrtc_state = Mutex::new(Some(WebRtcState {
+            media_engine: Default::default(),
+            registry: Default::default(),
+            config: Default::default()
+        }));
+
+        Self { state: Arc::new(Mutex::new(Some(State { video_state: None, audio_state: None, webrtc_state }))) }
     }
 }
 
-impl ObjectImpl for WebRtcRedux {
-    fn properties() -> &'static [ParamSpec] {
-        static PROPERTIES: Lazy<Vec<ParamSpec>> = Lazy::new(|| {
-            vec![
-                glib::ParamSpecBoxed::new(
-                    "ice-servers",
-                    "Ice Servers",
-                    "The list of ICE servers TURN and STUN",
-                    Vec::<String>::static_type(),
-                    glib::ParamFlags::WRITABLE,
-                )
-            ]
-        });
-
-        PROPERTIES.as_ref()
-    }
-
-    fn set_property(&self, obj: &Self::Type, id: usize, value: &Value, pspec: &ParamSpec) {
-        match pspec.name() {
-            "ice-servers" => {
-                info!(CAT, "aaaaa: {:?}", value.get::<Vec<String>>().expect("type checked upstream"));
-            }
-
-            _ => unimplemented!(),
-        };
-    }
-
-    fn property(&self, _obj: &Self::Type, _id: usize, _pspec: &ParamSpec) -> Value {
-        info!(CAT, "propertycalled");
-        "".to_value()
-    }
-}
+impl ObjectImpl for WebRtcRedux {}
 
 impl ElementImpl for WebRtcRedux {
     fn metadata() -> Option<&'static gst::subclass::ElementMetadata> {

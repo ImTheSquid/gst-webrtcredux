@@ -1,4 +1,5 @@
 use gst::prelude::*;
+use webrtcredux::webrtcredux::*;
 
 //TODO: Implement a webrtc-rs server configured for receiving to test the plugin
 
@@ -17,9 +18,14 @@ fn pipeline_creation_test(){
     init();
     let pipeline = gst::Pipeline::new(None);
 
-    let webrtcredux = webrtcredux::webrtcredux::WebRtcRedux::default();
+    let webrtcredux = WebRtcRedux::default();
 
-    webrtcredux.set_property("ice-servers", &vec!["stun:stun.l.google.com:19302".to_string()]);
+    webrtcredux.add_ice_servers(vec![
+        RTCIceServer {
+            urls: vec!["stun:stun.l.google.com:19302".to_string()],
+            ..Default::default()
+        },
+    ]);
 
     pipeline.add_many(&[&webrtcredux]).unwrap();
 
