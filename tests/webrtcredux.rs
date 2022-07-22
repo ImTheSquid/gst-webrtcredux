@@ -17,7 +17,7 @@ fn pipeline_creation_test(){
     init();
     let pipeline = gst::Pipeline::new(None);
 
-    let webrtcredux = gst::ElementFactory::make("webrtcredux", None).unwrap();
+    let webrtcredux = webrtcredux::webrtcredux::WebRtcRedux::default();
 
     webrtcredux.set_property("ice-servers", &vec!["stun:stun.l.google.com:19302".to_string()]);
 

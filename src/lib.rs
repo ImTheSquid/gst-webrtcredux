@@ -1,5 +1,5 @@
 use gst::glib;
-mod webrtcredux;
+pub mod webrtcredux;
 
 fn plugin_init(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
     webrtcredux::register(plugin)?;
