@@ -6,6 +6,8 @@ use gst_base::subclass::prelude::*;
 use interceptor::registry::Registry;
 
 use once_cell::sync::Lazy;
+use webrtc::api::{API, APIBuilder};
+use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
 pub use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::peer_connection::configuration::RTCConfiguration;
@@ -53,8 +55,7 @@ enum MediaState {
 }
 
 struct WebRtcState {
-    media_engine: MediaEngine,
-    registry: Registry,
+    api: API,
     config: RTCConfiguration,
 }
 
@@ -87,9 +88,16 @@ impl ObjectSubclass for WebRtcRedux {
     type ParentType = gst_base::BaseSink;
 
     fn with_class(_klass: &Self::Class) -> Self {
+        let mut media_engine = MediaEngine::default();
+        let mut registry = Registry::new();
+        registry = register_default_interceptors(registry, &mut media_engine).expect("Failed to register default interceptors");
+        let api = APIBuilder::new()
+            .with_media_engine(media_engine)
+            .with_interceptor_registry(registry)
+            .build();
+
         let webrtc_state = Mutex::new(Some(WebRtcState {
-            media_engine: Default::default(),
-            registry: Default::default(),
+            api,
             config: Default::default()
         }));
 
