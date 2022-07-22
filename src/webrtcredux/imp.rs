@@ -8,7 +8,7 @@ use interceptor::registry::Registry;
 use once_cell::sync::Lazy;
 use webrtc::api::{API, APIBuilder};
 use webrtc::api::interceptor_registry::register_default_interceptors;
-use webrtc::api::media_engine::MediaEngine;
+use webrtc::api::media_engine::{MediaEngine, MIME_TYPE_G722, MIME_TYPE_H264, MIME_TYPE_OPUS, MIME_TYPE_PCMA, MIME_TYPE_PCMU, MIME_TYPE_VP8, MIME_TYPE_VP9};
 pub use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 
@@ -44,6 +44,18 @@ impl MediaType {
             "audio/x-mulaw" => MediaType::Mulaw,
             "audio/alaw" => MediaType::Alaw,
             _ => unreachable!("Something's very wrong!")
+        }
+    }
+
+    fn to_webrtcrs_mime(&self) -> &'static str {
+        match self {
+            MediaType::H264 => MIME_TYPE_H264,
+            MediaType::VP8 => MIME_TYPE_VP8,
+            MediaType::VP9 => MIME_TYPE_VP9,
+            MediaType::Opus => MIME_TYPE_OPUS,
+            MediaType::G722 => MIME_TYPE_G722,
+            MediaType::Mulaw => MIME_TYPE_PCMU,
+            MediaType::Alaw => MIME_TYPE_PCMA,
         }
     }
 }
