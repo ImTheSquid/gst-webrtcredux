@@ -10,15 +10,31 @@ description = "A revived version of GStreamer's webrtcbin plugin built for moder
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-gst = { package = "gstreamer", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs" }
-gst-base = { package = "gstreamer-base", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs" }
-gst-video = { package = "gstreamer-video", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs" }
-gst-audio = { package = "gstreamer-audio", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs" }
+gst = { package = "gstreamer", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs", features = ["v1_20"] }
+gst-app = { package = "gstreamer-app", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs", features = ["v1_20"] }
+gst-base = { package = "gstreamer-base", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs", features = ["v1_20"] }
+gst-video = { package = "gstreamer-video", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs", features = ["v1_20"] }
+gst-audio = { package = "gstreamer-audio", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs", features = ["v1_20"] }
 once_cell = "1.0"
+#webrtc-rs stuff TODO: Remove unnecessary dependencies
+webrtc = "0.4.0"
+webrtc-media = "0.4.5"
+interceptor = "0.7.6"
+webrtc-data = "0.3.3"
+rtp = "0.6.5"
+rtcp = "0.6.5"
+webrtc-srtp = "0.8.9"
+webrtc-sctp = "0.5.0"
+webrtc-mdns = "0.4.2"
+stun = "0.4.2"
+turn = "0.5.4"
+webrtc-ice = "0.7.0"
+sdp = "0.5.1"
+webrtc-util = "0.5.4"
 
 [lib]
 name = "webrtcredux"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
 
 [build-dependencies]
