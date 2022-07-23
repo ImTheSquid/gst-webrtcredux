@@ -5,6 +5,7 @@ use gst::subclass::prelude::ObjectSubclassExt;
 mod imp;
 
 pub use imp::RTCIceServer;
+pub mod sdp;
 
 glib::wrapper! {
     pub struct WebRtcRedux(ObjectSubclass<imp::WebRtcRedux>) @extends gst_base::BaseTransform, gst::Element, gst::Object;
