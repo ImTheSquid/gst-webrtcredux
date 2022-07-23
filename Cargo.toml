@@ -41,3 +41,6 @@ path = "src/lib.rs"
 
 [build-dependencies]
 gst-plugin-version-helper = {  git = "https://gitlab.freedesktop.org/gstreamer/gst-plugins-rs" }
+
+[dev-dependencies]
+indoc = "1.0.6"
