@@ -1,8 +1,10 @@
+use std::collections::HashMap;
 use std::future::Future;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use futures::future;
+use gst::prelude::ObjectExt;
 use gst::{debug, error, ErrorMessage, glib, info, prelude::PadExtManual, trace, traits::{ElementExt, GstObjectExt}};
 use gst_base::subclass::prelude::*;
 use interceptor::registry::Registry;
@@ -15,8 +17,6 @@ use webrtc::api::media_engine::MediaEngine;
 pub use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::RTCPeerConnection;
-use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
-use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 
 static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
     gst::DebugCategory::new(
@@ -35,13 +35,13 @@ static RUNTIME: Lazy<runtime::Runtime> = Lazy::new(|| {
 });
 
 
-#[derive(Debug, PartialEq, EnumString)]
+#[derive(Debug, PartialEq, Eq, EnumString, Clone, Copy)]
 enum MediaType {
     #[strum(ascii_case_insensitive, serialize = "video/H264", serialize = "video/x-h264")]
     H264,
-    #[strum(ascii_case_insensitive, serialize = "video/VP8")]
+    #[strum(ascii_case_insensitive, serialize = "video/x-vp8")]
     VP8,
-    #[strum(ascii_case_insensitive, serialize = "video/VP9")]
+    #[strum(ascii_case_insensitive, serialize = "video/x-vp9")]
     VP9,
     #[strum(ascii_case_insensitive, serialize = "audio/opus", serialize = "audio/x-opus")]
     Opus,
@@ -49,13 +49,36 @@ enum MediaType {
     G722,
     #[strum(ascii_case_insensitive, serialize = "audio/PCMU", serialize = "audio/x-mulaw")]
     Mulaw,
-    #[strum(ascii_case_insensitive, serialize = "audio/PCMA", serialize = "audio/alaw")]
+    #[strum(ascii_case_insensitive, serialize = "audio/PCMA", serialize = "audio/x-alaw")]
     Alaw,
 }
 
+#[derive(Clone, PartialEq, Eq)]
 enum MediaState {
     NotConfigured,
-    Configured { media_type: MediaType },
+    TypeConfigured(MediaType),
+    IdConfigured(String),
+    Configured { media: MediaType, id: String }
+}
+
+impl MediaState {
+    fn add_id(&self, new_id: &str) -> Self {
+        match self {
+            MediaState::NotConfigured => MediaState::IdConfigured(new_id.to_string()),
+            MediaState::TypeConfigured(media) => MediaState::Configured { media: *media, id: new_id.to_string() },
+            MediaState::IdConfigured(_) => MediaState::IdConfigured(new_id.to_string()),
+            MediaState::Configured { media, id: _ } => MediaState::Configured { media: *media, id: new_id.to_string() },
+        }
+    }
+
+    fn add_media(&self, new_media: MediaType) -> Self {
+        match self {
+            MediaState::NotConfigured => MediaState::TypeConfigured(new_media),
+            MediaState::TypeConfigured(_) => MediaState::TypeConfigured(new_media),
+            MediaState::IdConfigured(id) => MediaState::Configured { media: new_media, id: id.to_owned() },
+            MediaState::Configured { media: _, id } => MediaState::Configured { media: new_media, id: id.to_owned() },
+        }
+    }
 }
 
 struct WebRtcState {
@@ -65,8 +88,10 @@ struct WebRtcState {
 
 #[derive(Default)]
 struct State {
-    video_state: Option<MediaState>,
-    audio_state: Option<MediaState>
+    video_state: HashMap<usize, MediaState>,
+    next_video_pad_id: usize,
+    audio_state: HashMap<usize, MediaState>,
+    next_audio_pad_id: usize
 }
 
 struct WebRtcSettings {
@@ -163,6 +188,50 @@ impl WebRtcRedux {
 
         res
     }
+
+    pub fn set_stream_id(&self, pad_name: &str, stream_id: &str) -> Result<(), ErrorMessage> {
+        let split = pad_name.split("_").collect::<Vec<_>>();
+        if split.len() != 2 {
+            return Err(gst::error_msg!(gst::ResourceError::NotFound, [&format!("Pad with name '{}' is invalid", pad_name)]));
+        }
+
+        let id: usize = match split[1].parse() {
+            Ok(val) => val,
+            Err(_) => return Err(gst::error_msg!(gst::ResourceError::NotFound, [&format!("Couldn't parse '{}' into number", split[1])]))
+        };
+
+        match split[0] {
+            "video" => {
+                if !self.state.lock().unwrap().as_ref().unwrap().video_state.contains_key(&id) {
+                    return Err(gst::error_msg!(gst::ResourceError::NotFound, [&format!("Invalid ID: {}", id)]));
+                }
+
+                let current = {
+                    let state = self.state.lock().unwrap();
+                    state.as_ref().unwrap().video_state.get(&id).unwrap().to_owned()
+                };
+
+                self.state.lock().unwrap().as_mut().unwrap().video_state.insert(id, current.add_id(stream_id));
+
+                Ok(())
+            },
+            "audio" => {
+                if !self.state.lock().unwrap().as_ref().unwrap().audio_state.contains_key(&id) {
+                    return Err(gst::error_msg!(gst::ResourceError::NotFound, [&format!("Invalid ID: {}", id)]));
+                }
+
+                let current = {
+                    let state = self.state.lock().unwrap();
+                    state.as_ref().unwrap().audio_state.get(&id).unwrap().to_owned()
+                };
+
+                self.state.lock().unwrap().as_mut().unwrap().audio_state.insert(id, current.add_id(stream_id));
+
+                Ok(())
+            },
+            _ => Err(gst::error_msg!(gst::ResourceError::NotFound, [&format!("Pad with type '{}' not found", split[0])]))
+        }
+    }
 }
 
 #[glib::object_subclass]
@@ -218,12 +287,12 @@ impl ElementImpl for WebRtcRedux {
             let mut video_caps = gst::Caps::new_empty_simple("video/x-h264");
             let video_caps = video_caps.get_mut().unwrap();
             //MIME_TYPE_VP8
-            video_caps.append(gst::Caps::new_empty_simple("video/VP8"));
+            video_caps.append(gst::Caps::new_empty_simple("video/x-vp8"));
             //MIME_TYPE_VP9
-            video_caps.append(gst::Caps::new_empty_simple("video/VP9"));
+            video_caps.append(gst::Caps::new_empty_simple("video/x-vp9"));
 
             let video_sink = gst::PadTemplate::new(
-                "video",
+                "video_%u",
                 gst::PadDirection::Sink,
                 gst::PadPresence::Request,
                 &video_caps.to_owned(),
@@ -237,10 +306,10 @@ impl ElementImpl for WebRtcRedux {
             //MIME_TYPE_PCMU
             audio_caps.append(gst::Caps::new_empty_simple("audio/x-mulaw"));
             //MIME_TYPE_PCMA
-            audio_caps.append(gst::Caps::new_empty_simple("audio/alaw"));
+            audio_caps.append(gst::Caps::new_empty_simple("audio/x-alaw"));
 
             let audio_sink = gst::PadTemplate::new(
-                "audio",
+                "audio_%u",
                 gst::PadDirection::Sink,
                 gst::PadPresence::Request,
                 &audio_caps.to_owned(),
@@ -258,24 +327,22 @@ impl ElementImpl for WebRtcRedux {
 
         // Set up audio and video pads along with callbacks for events and data
         match templ.name_template() {
-            "video" => {
-                if state.video_state.is_some() {
-                    debug!(
-                        CAT,
-                        obj: element,
-                        "requested_new_pad: video pad is already set"
-                    );
-                    return None;
-                }
-
-                let pad = gst::Pad::from_template(templ, Some("video"));
+            "video_%u" => {
+                let pad = gst::Pad::from_template(templ, Some(&format!("video_{}", state.next_video_pad_id)));
                 unsafe {
+                    let id = state.next_video_pad_id;
                     let state = self.state.clone();
                     pad.set_event_function(move |_pad, _parent, event| {
                         let structure = event.structure().unwrap();
                         if structure.name() == "GstEventCaps" {
                             let mime = structure.get::<gst::Caps>("caps").unwrap().structure(0).unwrap().name();
-                            state.lock().unwrap().as_mut().unwrap().video_state = Some(MediaState::Configured { media_type: MediaType::from_str(mime).expect("Failed to parse mime type") });
+
+                            let current = {
+                                let state = state.lock().unwrap();
+                                state.as_ref().unwrap().video_state.get(&id).unwrap().to_owned()
+                            };
+                            state.lock().unwrap().as_mut().unwrap().video_state.insert(id, current.add_media(MediaType::from_str(mime).expect("Failed to parse mime type")));
+
                             debug!(CAT, "Video media type set to: {}", mime);
                         }
                         true
@@ -291,28 +358,27 @@ impl ElementImpl for WebRtcRedux {
                 }
                 element.add_pad(&pad).unwrap();
 
-                state.video_state = Some(MediaState::NotConfigured);
+                state.video_state.insert(state.next_video_pad_id, MediaState::NotConfigured);
+                state.next_video_pad_id += 1;
 
                 Some(pad)
             }
-            "audio" => {
-                if state.audio_state.is_some() {
-                    debug!(
-                        CAT,
-                        obj: element,
-                        "requested_new_pad: audio pad is already set"
-                    );
-                    return None;
-                }
-
-                let pad = gst::Pad::from_template(templ, Some("audio"));
+            "audio_%u" => {
+                let pad = gst::Pad::from_template(templ, Some(&format!("audio_{}", state.next_audio_pad_id)));
                 unsafe {
+                    let id = state.next_audio_pad_id;
                     let state = self.state.clone();
                     pad.set_event_function(move |_pad, _parent, event| {
                         let structure = event.structure().unwrap();
                         if structure.name() == "GstEventCaps" {
                             let mime = structure.get::<gst::Caps>("caps").unwrap().structure(0).unwrap().name();
-                            state.lock().unwrap().as_mut().unwrap().audio_state = Some(MediaState::Configured { media_type: MediaType::from_str(mime).expect("Failed to parse mime type") });
+                            
+                            let current = {
+                                let state = state.lock().unwrap();
+                                state.as_ref().unwrap().audio_state.get(&id).unwrap().to_owned()
+                            };
+                            state.lock().unwrap().as_mut().unwrap().audio_state.insert(id, current.add_media(MediaType::from_str(mime).expect("Failed to parse mime type")));
+
                             debug!(CAT, "Audio media type set to: {}", mime);
                         }
                         true
@@ -328,7 +394,8 @@ impl ElementImpl for WebRtcRedux {
                 }
                 element.add_pad(&pad).unwrap();
 
-                state.audio_state = Some(MediaState::NotConfigured);
+                state.audio_state.insert(state.next_audio_pad_id, MediaState::NotConfigured);
+                state.next_audio_pad_id += 1;
 
                 Some(pad)
             }
@@ -340,10 +407,13 @@ impl ElementImpl for WebRtcRedux {
     }
 
     fn release_pad(&self, element: &Self::Type, pad: &gst::Pad) {
-        if pad.name() == "video" {
-            self.state.lock().unwrap().as_mut().unwrap().video_state.take();
+        let name = pad.name();
+        let split = name.split("_").collect::<Vec<_>>();
+        let id: usize = split[1].parse().unwrap();
+        if split[0] == "video" {
+            self.state.lock().unwrap().as_mut().unwrap().video_state.remove(&id);
         } else {
-            self.state.lock().unwrap().as_mut().unwrap().audio_state.take();
+            self.state.lock().unwrap().as_mut().unwrap().audio_state.remove(&id);
         };
 
         self.parent_release_pad(element, pad);
@@ -358,6 +428,12 @@ impl GstObjectImpl for WebRtcRedux {}
 
 impl BaseSinkImpl for WebRtcRedux {
     fn start(&self, _sink: &Self::Type) -> Result<(), ErrorMessage> {
+        // Make sure all pads are configured with a stream ID
+        let audio_ok = self.state.lock().unwrap().as_ref().unwrap().audio_state.values().all(|val| match *val { MediaState::IdConfigured(_) => true, _ => false });
+        let video_ok = self.state.lock().unwrap().as_ref().unwrap().video_state.values().all(|val| match *val { MediaState::IdConfigured(_) => true, _ => false });
+        if !(audio_ok && video_ok) {
+            return Err(gst::error_msg!(gst::LibraryError::Settings, ["Not all pads are fully-configured"]));
+        }
 
         let peer_connection = match self.webrtc_settings.lock().unwrap().config.take() {
             Some(config) => {

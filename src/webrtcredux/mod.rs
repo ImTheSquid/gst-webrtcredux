@@ -1,3 +1,4 @@
+use gst::ErrorMessage;
 use gst::glib;
 use gst::prelude::*;
 use gst::subclass::prelude::ObjectSubclassExt;
@@ -21,6 +22,10 @@ impl Default for WebRtcRedux {
 impl WebRtcRedux {
     pub fn add_ice_servers(&self, ice_servers: Vec<RTCIceServer>) {
         imp::WebRtcRedux::from_instance(self).add_ice_servers(ice_servers);
+    }
+
+    pub fn set_stream_id(&self, pad_name: &str, stream_id: &str) -> Result<(), ErrorMessage> {
+        imp::WebRtcRedux::from_instance(self).set_stream_id(pad_name, stream_id)
     }
 }
 

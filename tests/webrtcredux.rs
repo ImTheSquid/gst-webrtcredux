@@ -85,37 +85,37 @@ enum Encoder {
 }
 
 #[test]
-fn pipeline_creation_test_h264() {
+fn pipeline_creation_h264() {
     pipeline_creation_test(vec![Encoder::Video(VideoEncoder::H264)]);
 }
 
 #[test]
-fn pipeline_creation_test_vp8() {
+fn pipeline_creation_vp8() {
     pipeline_creation_test(vec![Encoder::Video(VideoEncoder::VP8)]);
 }
 
 #[test]
-fn pipeline_creation_test_vp9() {
+fn pipeline_creation_vp9() {
     pipeline_creation_test(vec![Encoder::Video(VideoEncoder::VP9)]);
 }
 
 #[test]
-fn pipeline_creation_test_opus() {
+fn pipeline_creation_opus() {
     pipeline_creation_test(vec![Encoder::Audio(AudioEncoder::Opus)]);
 }
 
 #[test]
-fn pipeline_creation_test_mulaw() {
+fn pipeline_creation_mulaw() {
     pipeline_creation_test(vec![Encoder::Audio(AudioEncoder::Mulaw)]);
 }
 
 #[test]
-fn pipeline_creation_test_alaw() {
+fn pipeline_creation_alaw() {
     pipeline_creation_test(vec![Encoder::Audio(AudioEncoder::Alaw)]);
 }
 
 #[test]
-fn pipeline_creation_test_combined() {
+fn pipeline_creation_combined() {
     let mut to_test = vec![];
     for a_encoder in AudioEncoder::iter() {
         to_test.push(Encoder::Audio(a_encoder));
@@ -141,6 +141,8 @@ fn pipeline_creation_test(encoders: Vec<Encoder>) {
 
     pipeline.add(&webrtcredux).expect("Failed to add webrtcredux to the pipeline");
 
+    let mut audio_idx: usize = 0;
+    let mut video_idx: usize = 0;
     for encoder_to_use in encoders {
         let src = match encoder_to_use {
             Encoder::Audio(_) => {
@@ -155,13 +157,26 @@ fn pipeline_creation_test(encoders: Vec<Encoder>) {
 
         pipeline.add_many(&[&src, &encoder]).expect("Failed to add elements to the pipeline");
         Element::link_many(&[&src, &encoder, webrtcredux.as_ref()]).expect("Failed to link elements");
+
+        match encoder_to_use {
+            Encoder::Audio(_) => {
+                let pad_name = &format!("audio_{}", audio_idx);
+                webrtcredux.set_stream_id(pad_name, pad_name).unwrap();
+                audio_idx += 1;
+            },
+            Encoder::Video(_) => {
+                let pad_name = &format!("video_{}", video_idx);
+                webrtcredux.set_stream_id(pad_name, pad_name).unwrap();
+                video_idx += 1;
+            }
+        }
     }
 
     assert_eq!(pipeline.set_state(gst::State::Playing).unwrap(), gst::StateChangeSuccess::Success);
 }
 
 #[test]
-fn test_sdp_serialization() {
+fn sdp_serialization() {
     let target = indoc!("v=0
     o=jdoe 2890844526 2890842807 IN IP4 10.47.16.5
     s=SDP Seminar
@@ -223,7 +238,7 @@ fn test_sdp_serialization() {
 }
 
 #[test]
-fn test_sdp_deserialization() {
+fn sdp_deserialization() {
     let props = vec![
         SdpProp::Version(0),
         SdpProp::Origin {
