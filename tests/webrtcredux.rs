@@ -1,17 +1,20 @@
-use std::fmt::{Display, format, Formatter};
+use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 
-use gst::{debug_bin_to_dot_data, DebugGraphDetails, Element};
+use enum_dispatch::enum_dispatch;
 use gst::glib::BoolError;
 use gst::prelude::*;
+use gst::{debug_bin_to_dot_data, DebugGraphDetails, Element};
 use indoc::indoc;
-use strum::IntoEnumIterator;
-use strum_macros::EnumIter;
-use enum_dispatch::enum_dispatch;
 use std::string::ToString;
+use strum::IntoEnumIterator;
 use strum_macros::Display;
+use strum_macros::EnumIter;
 
-use webrtcredux::webrtcredux::{RTCIceServer, sdp::{AddressType, MediaProp, MediaProtocol, MediaType, NetworkType, SDP, SdpProp}, WebRtcRedux};
+use webrtcredux::webrtcredux::{
+    sdp::{AddressType, MediaProp, MediaProtocol, MediaType, NetworkType, SdpProp, SDP},
+    RTCIceServer, WebRtcRedux,
+};
 
 //TODO: Implement a webrtc-rs server configured for receiving to test the plugin
 
@@ -41,18 +44,10 @@ enum AudioEncoder {
 impl GstEncoder for AudioEncoder {
     fn to_gst_encoder(&self) -> Result<Element, BoolError> {
         match self {
-            AudioEncoder::Opus => {
-                gst::ElementFactory::make("opusenc", None)
-            }
-            AudioEncoder::Mulaw => {
-                gst::ElementFactory::make("mulawenc", None)
-            }
-            AudioEncoder::Alaw => {
-                gst::ElementFactory::make("alawenc", None)
-            }
-            AudioEncoder::G722 => {
-                gst::ElementFactory::make("avenc_g722", None)
-            }
+            AudioEncoder::Opus => gst::ElementFactory::make("opusenc", None),
+            AudioEncoder::Mulaw => gst::ElementFactory::make("mulawenc", None),
+            AudioEncoder::Alaw => gst::ElementFactory::make("alawenc", None),
+            AudioEncoder::G722 => gst::ElementFactory::make("avenc_g722", None),
         }
     }
 }
@@ -67,15 +62,9 @@ enum VideoEncoder {
 impl GstEncoder for VideoEncoder {
     fn to_gst_encoder(&self) -> Result<Element, BoolError> {
         match self {
-            VideoEncoder::H264 => {
-                gst::ElementFactory::make("x264enc", None)
-            }
-            VideoEncoder::VP8 => {
-                gst::ElementFactory::make("vp8enc", None)
-            }
-            VideoEncoder::VP9 => {
-                gst::ElementFactory::make("vp9enc", None)
-            }
+            VideoEncoder::H264 => gst::ElementFactory::make("x264enc", None),
+            VideoEncoder::VP8 => gst::ElementFactory::make("vp8enc", None),
+            VideoEncoder::VP9 => gst::ElementFactory::make("vp9enc", None),
         }
     }
 }
@@ -144,38 +133,37 @@ fn pipeline_creation_test(encoders: Vec<Encoder>) {
 
     let webrtcredux = WebRtcRedux::default();
 
-    webrtcredux.add_ice_servers(vec![
-        RTCIceServer {
-            urls: vec!["stun:stun.l.google.com:19302".to_string()],
-            ..Default::default()
-        },
-    ]);
+    webrtcredux.add_ice_servers(vec![RTCIceServer {
+        urls: vec!["stun:stun.l.google.com:19302".to_string()],
+        ..Default::default()
+    }]);
 
-    pipeline.add(&webrtcredux).expect("Failed to add webrtcredux to the pipeline");
+    pipeline
+        .add(&webrtcredux)
+        .expect("Failed to add webrtcredux to the pipeline");
 
     let mut audio_idx: usize = 0;
     let mut video_idx: usize = 0;
     for encoder_to_use in &encoders {
         let src = match encoder_to_use {
-            Encoder::Audio(_) => {
-                gst::ElementFactory::make("audiotestsrc", None).unwrap()
-            }
-            Encoder::Video(_) => {
-                gst::ElementFactory::make("videotestsrc", None).unwrap()
-            }
+            Encoder::Audio(_) => gst::ElementFactory::make("audiotestsrc", None).unwrap(),
+            Encoder::Video(_) => gst::ElementFactory::make("videotestsrc", None).unwrap(),
         };
 
         let encoder = encoder_to_use.to_gst_encoder().unwrap();
 
-        pipeline.add_many(&[&src, &encoder]).expect("Failed to add elements to the pipeline");
-        Element::link_many(&[&src, &encoder, webrtcredux.as_ref()]).expect("Failed to link elements");
+        pipeline
+            .add_many(&[&src, &encoder])
+            .expect("Failed to add elements to the pipeline");
+        Element::link_many(&[&src, &encoder, webrtcredux.as_ref()])
+            .expect("Failed to link elements");
 
         match encoder_to_use {
             Encoder::Audio(_) => {
                 let pad_name = &format!("audio_{}", audio_idx);
                 webrtcredux.set_stream_id(pad_name, pad_name).unwrap();
                 audio_idx += 1;
-            },
+            }
             Encoder::Video(_) => {
                 let pad_name = &format!("video_{}", video_idx);
                 webrtcredux.set_stream_id(pad_name, pad_name).unwrap();
@@ -184,16 +172,31 @@ fn pipeline_creation_test(encoders: Vec<Encoder>) {
         }
     }
 
-    assert_eq!(pipeline.set_state(gst::State::Playing).unwrap(), gst::StateChangeSuccess::Success);
+    assert_eq!(
+        pipeline.set_state(gst::State::Playing).unwrap(),
+        gst::StateChangeSuccess::Success
+    );
 
     // Debug diagram
     let out = debug_bin_to_dot_data(&pipeline, DebugGraphDetails::ALL);
-    std::fs::write(format!("./target/debug/{}.dot", encoders.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("-")), out.as_str()).unwrap();
+    std::fs::write(
+        format!(
+            "./target/debug/{}.dot",
+            encoders
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("-")
+        ),
+        out.as_str(),
+    )
+    .unwrap();
 }
 
 #[test]
 fn sdp_serialization() {
-    let target = indoc!("v=0
+    let target = indoc!(
+        "v=0
     o=jdoe 2890844526 2890842807 IN IP4 10.47.16.5
     s=SDP Seminar
     i=A Seminar on the session description protocol
@@ -204,7 +207,8 @@ fn sdp_serialization() {
     a=recvonly
     m=audio 49170 RTP/AVP 0
     m=video 51372 RTP/AVP 99
-    a=rtpmap:99 h263-1998/90000");
+    a=rtpmap:99 h263-1998/90000"
+    );
 
     let props = vec![
         SdpProp::Version(0),
@@ -228,8 +232,14 @@ fn sdp_serialization() {
             ttl: Some(127),
             num_addresses: None,
         },
-        SdpProp::Timing { start: 2873397496, stop: 2873404696 },
-        SdpProp::Attribute { key: "recvonly".to_string(), value: None },
+        SdpProp::Timing {
+            start: 2873397496,
+            stop: 2873404696,
+        },
+        SdpProp::Attribute {
+            key: "recvonly".to_string(),
+            value: None,
+        },
         SdpProp::Media {
             r#type: MediaType::Audio,
             ports: vec![49170],
@@ -242,9 +252,10 @@ fn sdp_serialization() {
             ports: vec![51372],
             protocol: MediaProtocol::RtpAvp,
             format: "99".to_string(),
-            props: vec![
-                MediaProp::Attribute { key: "rtpmap".to_string(), value: Some("99 h263-1998/90000".to_string()) }
-            ],
+            props: vec![MediaProp::Attribute {
+                key: "rtpmap".to_string(),
+                value: Some("99 h263-1998/90000".to_string()),
+            }],
         },
     ];
 
@@ -277,8 +288,14 @@ fn sdp_deserialization() {
             ttl: Some(127),
             num_addresses: None,
         },
-        SdpProp::Timing { start: 2873397496, stop: 2873404696 },
-        SdpProp::Attribute { key: "recvonly".to_string(), value: None },
+        SdpProp::Timing {
+            start: 2873397496,
+            stop: 2873404696,
+        },
+        SdpProp::Attribute {
+            key: "recvonly".to_string(),
+            value: None,
+        },
         SdpProp::Media {
             r#type: MediaType::Audio,
             ports: vec![49170],
@@ -291,15 +308,17 @@ fn sdp_deserialization() {
             ports: vec![51372],
             protocol: MediaProtocol::RtpAvp,
             format: "99".to_string(),
-            props: vec![
-                MediaProp::Attribute { key: "rtpmap".to_string(), value: Some("99 h263-1998/90000".to_string()) }
-            ],
+            props: vec![MediaProp::Attribute {
+                key: "rtpmap".to_string(),
+                value: Some("99 h263-1998/90000".to_string()),
+            }],
         },
     ];
 
     let target = SDP { props };
 
-    let test = indoc!("v=0
+    let test = indoc!(
+        "v=0
     o=jdoe 2890844526 2890842807 IN IP4 10.47.16.5
     s=SDP Seminar
     i=A Seminar on the session description protocol
@@ -310,11 +329,16 @@ fn sdp_deserialization() {
     a=recvonly
     m=audio 49170 RTP/AVP 0
     m=video 51372 RTP/AVP 99
-    a=rtpmap:99 h263-1998/90000");
+    a=rtpmap:99 h263-1998/90000"
+    );
 
     let res = SDP::from_str(test);
 
-    assert!(res.is_ok(), "Parse failed with error: {:?}", res.err().unwrap());
+    assert!(
+        res.is_ok(),
+        "Parse failed with error: {:?}",
+        res.err().unwrap()
+    );
 
     assert_eq!(res.unwrap(), target);
 }

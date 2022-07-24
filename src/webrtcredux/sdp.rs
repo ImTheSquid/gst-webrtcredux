@@ -1,4 +1,8 @@
-use std::{fmt::Debug, str::FromStr, num::{ParseIntError, IntErrorKind}};
+use std::{
+    fmt::Debug,
+    num::{IntErrorKind, ParseIntError},
+    str::FromStr,
+};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum MediaProp {
@@ -10,17 +14,17 @@ pub enum MediaProp {
         ttl: Option<usize>,
         num_addresses: Option<usize>,
         /// Optional suffix to previous data
-        suffix: Option<String>
+        suffix: Option<String>,
     },
     Bandwidth {
         r#type: BandwidthType,
-        bandwidth: usize
+        bandwidth: usize,
     },
     EncryptionKeys(EncryptionKeyMethod),
     Attribute {
         key: String,
-        value: Option<String>
-    }
+        value: Option<String>,
+    },
 }
 
 impl FromStr for MediaProp {
@@ -37,8 +41,12 @@ impl FromStr for MediaProp {
                 let (address, ttl, num_addresses) = match address_split.len() {
                     1 => (address_split[0], None, None),
                     2 => (address_split[0], Some(address_split[1].parse()?), None),
-                    3 => (address_split[0], Some(address_split[1].parse()?), Some(address_split[2].parse()?)),
-                    _ => unreachable!()
+                    3 => (
+                        address_split[0],
+                        Some(address_split[1].parse()?),
+                        Some(address_split[2].parse()?),
+                    ),
+                    _ => unreachable!(),
                 };
 
                 let suffix = if tokens.len() > 3 {
@@ -47,40 +55,42 @@ impl FromStr for MediaProp {
                     None
                 };
 
-                Ok(MediaProp::Connection { 
-                    net_type: NetworkType::from_str(&tokens[0])?, 
-                    address_type: AddressType::from_str(&tokens[1])?, 
-                    address: address.to_string(), 
-                    ttl, 
-                    num_addresses, 
-                    suffix
+                Ok(MediaProp::Connection {
+                    net_type: NetworkType::from_str(&tokens[0])?,
+                    address_type: AddressType::from_str(&tokens[1])?,
+                    address: address.to_string(),
+                    ttl,
+                    num_addresses,
+                    suffix,
                 })
-            },
+            }
             'b' => {
                 let tokens = value.split(":").collect::<Vec<&str>>();
 
-                Ok(MediaProp::Bandwidth { 
+                Ok(MediaProp::Bandwidth {
                     r#type: BandwidthType::from_str(&tokens[0])?,
-                    bandwidth: tokens[1].parse()? 
+                    bandwidth: tokens[1].parse()?,
                 })
-            },
-            'k' => Ok(MediaProp::EncryptionKeys(EncryptionKeyMethod::from_str(&value)?)),
+            }
+            'k' => Ok(MediaProp::EncryptionKeys(EncryptionKeyMethod::from_str(
+                &value,
+            )?)),
             'a' => {
                 let tokens = value.split(":").collect::<Vec<&str>>();
 
                 Ok(if tokens.len() > 1 {
-                    MediaProp::Attribute { 
-                        key: tokens[0].to_string(), 
-                        value: Some(tokens[1..].join(":"))
+                    MediaProp::Attribute {
+                        key: tokens[0].to_string(),
+                        value: Some(tokens[1..].join(":")),
                     }
                 } else {
                     MediaProp::Attribute {
                         key: value,
-                        value: None
+                        value: None,
                     }
                 })
-            },
-            _ => Err(ParseError::UnknownToken(s.to_string()))
+            }
+            _ => Err(ParseError::UnknownToken(s.to_string())),
         }
     }
 }
@@ -89,7 +99,14 @@ impl ToString for MediaProp {
     fn to_string(&self) -> String {
         match self {
             MediaProp::Title(title) => format!("i={title}"),
-            MediaProp::Connection { net_type, address_type, address, ttl, num_addresses, suffix } => {
+            MediaProp::Connection {
+                net_type,
+                address_type,
+                address,
+                ttl,
+                num_addresses,
+                suffix,
+            } => {
                 // TTL is required for IPv4
                 let mut address = if *address_type == AddressType::IPv4 || ttl.is_some() {
                     format!("{address}/{}", ttl.unwrap())
@@ -102,12 +119,25 @@ impl ToString for MediaProp {
                 }
 
                 if let Some(suffix) = suffix {
-                    format!("c={} {} {} {}", net_type.to_string(), address_type.to_string(), address, suffix)
+                    format!(
+                        "c={} {} {} {}",
+                        net_type.to_string(),
+                        address_type.to_string(),
+                        address,
+                        suffix
+                    )
                 } else {
-                    format!("c={} {} {}", net_type.to_string(), address_type.to_string(), address)
+                    format!(
+                        "c={} {} {}",
+                        net_type.to_string(),
+                        address_type.to_string(),
+                        address
+                    )
                 }
-            },
-            MediaProp::Bandwidth { r#type, bandwidth } => format!("b={}:{}", r#type.to_string(), bandwidth),
+            }
+            MediaProp::Bandwidth { r#type, bandwidth } => {
+                format!("b={}:{}", r#type.to_string(), bandwidth)
+            }
             MediaProp::EncryptionKeys(method) => format!("k={}", method.to_string()),
             MediaProp::Attribute { key, value } => {
                 if let Some(value) = value {
@@ -125,7 +155,7 @@ pub enum MediaType {
     Audio,
     Video,
     Text,
-    Application
+    Application,
 }
 
 impl FromStr for MediaType {
@@ -137,7 +167,7 @@ impl FromStr for MediaType {
             "video" => Ok(MediaType::Video),
             "text" => Ok(MediaType::Text),
             "application" => Ok(MediaType::Application),
-            _ => Err(ParseError::UnknownToken(s.to_string()))
+            _ => Err(ParseError::UnknownToken(s.to_string())),
         }
     }
 }
@@ -149,7 +179,8 @@ impl ToString for MediaType {
             MediaType::Video => "video",
             MediaType::Text => "text",
             MediaType::Application => "application",
-        }.to_string()
+        }
+        .to_string()
     }
 }
 
@@ -157,7 +188,7 @@ impl ToString for MediaType {
 pub enum MediaProtocol {
     Udp,
     RtpAvp,
-    RtpSavp
+    RtpSavp,
 }
 
 impl FromStr for MediaProtocol {
@@ -168,7 +199,7 @@ impl FromStr for MediaProtocol {
             "udp" => Ok(MediaProtocol::Udp),
             "RTP/AVP" => Ok(MediaProtocol::RtpAvp),
             "RTP/SAVP" => Ok(MediaProtocol::RtpSavp),
-            _ => Err(ParseError::UnknownToken(s.to_string()))
+            _ => Err(ParseError::UnknownToken(s.to_string())),
         }
     }
 }
@@ -179,13 +210,14 @@ impl ToString for MediaProtocol {
             MediaProtocol::Udp => "udp",
             MediaProtocol::RtpAvp => "RTP/AVP",
             MediaProtocol::RtpSavp => "RTP/SAVP",
-        }.to_owned()
+        }
+        .to_owned()
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum NetworkType {
-    Internet
+    Internet,
 }
 
 impl FromStr for NetworkType {
@@ -194,7 +226,7 @@ impl FromStr for NetworkType {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "IN" => Ok(NetworkType::Internet),
-            _ => Err(ParseError::UnknownToken(s.to_string()))
+            _ => Err(ParseError::UnknownToken(s.to_string())),
         }
     }
 }
@@ -203,14 +235,15 @@ impl ToString for NetworkType {
     fn to_string(&self) -> String {
         match self {
             NetworkType::Internet => "IN",
-        }.to_string()
+        }
+        .to_string()
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum AddressType {
     IPv4,
-    IPv6
+    IPv6,
 }
 
 impl FromStr for AddressType {
@@ -218,9 +251,9 @@ impl FromStr for AddressType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "IP4" =>  Ok(AddressType::IPv4),
+            "IP4" => Ok(AddressType::IPv4),
             "IP6" => Ok(AddressType::IPv6),
-            _ => Err(ParseError::UnknownToken(s.to_string()))
+            _ => Err(ParseError::UnknownToken(s.to_string())),
         }
     }
 }
@@ -230,14 +263,15 @@ impl ToString for AddressType {
         match self {
             AddressType::IPv4 => "IP4",
             AddressType::IPv6 => "IP6",
-        }.to_string()
+        }
+        .to_string()
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum BandwidthType {
     ConferenceTotal,
-    ApplicationSpecific
+    ApplicationSpecific,
 }
 
 impl FromStr for BandwidthType {
@@ -247,7 +281,7 @@ impl FromStr for BandwidthType {
         match s {
             "CT" => Ok(BandwidthType::ConferenceTotal),
             "AS" => Ok(BandwidthType::ApplicationSpecific),
-            _ => Err(ParseError::UnknownToken(s.to_string()))
+            _ => Err(ParseError::UnknownToken(s.to_string())),
         }
     }
 }
@@ -257,14 +291,15 @@ impl ToString for BandwidthType {
         match self {
             BandwidthType::ConferenceTotal => "CT",
             BandwidthType::ApplicationSpecific => "AS",
-        }.to_string()
+        }
+        .to_string()
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct TimeZoneAdjustment {
     time: usize,
-    offset: String
+    offset: String,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -272,7 +307,7 @@ pub enum EncryptionKeyMethod {
     Clear(String),
     Base64(String),
     Uri(String),
-    Prompt
+    Prompt,
 }
 
 impl FromStr for EncryptionKeyMethod {
@@ -280,7 +315,7 @@ impl FromStr for EncryptionKeyMethod {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s == "prompt" {
-            return Ok(EncryptionKeyMethod::Prompt)
+            return Ok(EncryptionKeyMethod::Prompt);
         }
 
         let split = s.split(":").collect::<Vec<&str>>();
@@ -289,7 +324,7 @@ impl FromStr for EncryptionKeyMethod {
             "clear" => Ok(EncryptionKeyMethod::Clear(key)),
             "base64" => Ok(EncryptionKeyMethod::Base64(key)),
             "uri" => Ok(EncryptionKeyMethod::Uri(key)),
-            _ => Err(ParseError::UnknownToken(s.to_string()))
+            _ => Err(ParseError::UnknownToken(s.to_string())),
         }
     }
 }
@@ -300,7 +335,7 @@ impl ToString for EncryptionKeyMethod {
             EncryptionKeyMethod::Clear(key) => format!("clear:{key}"),
             EncryptionKeyMethod::Base64(key) => format!("base64:{key}"),
             EncryptionKeyMethod::Uri(key) => format!("uri:{key}"),
-            EncryptionKeyMethod::Prompt => "prompt".to_string()
+            EncryptionKeyMethod::Prompt => "prompt".to_string(),
         }
     }
 }
@@ -309,13 +344,13 @@ impl ToString for EncryptionKeyMethod {
 #[derive(Debug, PartialEq, Eq)]
 pub enum SdpProp {
     Version(u8),
-    Origin { 
-        username: String, 
-        session_id: String, 
-        session_version: usize, 
-        net_type: NetworkType, 
+    Origin {
+        username: String,
+        session_id: String,
+        session_version: usize,
+        net_type: NetworkType,
         address_type: AddressType,
-        address: String
+        address: String,
     },
     SessionName(String),
     SessionInformation(String),
@@ -329,35 +364,35 @@ pub enum SdpProp {
         ttl: Option<usize>,
         num_addresses: Option<usize>,
         /// Optional suffix to previous data
-        suffix: Option<String>
+        suffix: Option<String>,
     },
     Bandwidth {
         r#type: BandwidthType,
-        bandwidth: usize
+        bandwidth: usize,
     },
     Timing {
         start: usize,
-        stop: usize
+        stop: usize,
     },
     /// Can be either numbers or numbers with time modifiers (d, h, m, s) so should be strings
     RepeatTimes {
         interval: String,
         active_duration: String,
-        start_offsets: Vec<String>
+        start_offsets: Vec<String>,
     },
     TimeZone(Vec<TimeZoneAdjustment>),
     EncryptionKeys(EncryptionKeyMethod),
     Attribute {
         key: String,
-        value: Option<String>
+        value: Option<String>,
     },
     Media {
         r#type: MediaType,
         ports: Vec<u16>,
         protocol: MediaProtocol,
         format: String,
-        props: Vec<MediaProp>
-    }
+        props: Vec<MediaProp>,
+    },
 }
 
 impl FromStr for SdpProp {
@@ -366,17 +401,17 @@ impl FromStr for SdpProp {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let (key, value) = content_from_line(s)?;
         let tokens = value.split(" ").collect::<Vec<&str>>();
-        
+
         // TODO: Cut down on code copying from SDPProp to MediaProp
         match key {
             'v' => Ok(SdpProp::Version(value.parse()?)),
-            'o' => Ok(SdpProp::Origin { 
-                username: tokens[0].to_string(), 
-                session_id: tokens[1].to_string(), 
-                session_version: tokens[2].parse()?, 
-                net_type: NetworkType::from_str(tokens[3])?, 
-                address_type: AddressType::from_str(tokens[4])?, 
-                address: tokens[5].to_string()
+            'o' => Ok(SdpProp::Origin {
+                username: tokens[0].to_string(),
+                session_id: tokens[1].to_string(),
+                session_version: tokens[2].parse()?,
+                net_type: NetworkType::from_str(tokens[3])?,
+                address_type: AddressType::from_str(tokens[4])?,
+                address: tokens[5].to_string(),
             }),
             's' => Ok(SdpProp::SessionName(value)),
             'i' => Ok(SdpProp::SessionInformation(value)),
@@ -388,8 +423,12 @@ impl FromStr for SdpProp {
                 let (address, ttl, num_addresses) = match address_split.len() {
                     1 => (address_split[0], None, None),
                     2 => (address_split[0], Some(address_split[1].parse()?), None),
-                    3 => (address_split[0], Some(address_split[1].parse()?), Some(address_split[2].parse()?)),
-                    _ => unreachable!()
+                    3 => (
+                        address_split[0],
+                        Some(address_split[1].parse()?),
+                        Some(address_split[2].parse()?),
+                    ),
+                    _ => unreachable!(),
                 };
 
                 let suffix = if tokens.len() > 3 {
@@ -398,56 +437,64 @@ impl FromStr for SdpProp {
                     None
                 };
 
-                Ok(SdpProp::Connection { 
-                    net_type: NetworkType::from_str(&tokens[0])?, 
-                    address_type: AddressType::from_str(&tokens[1])?, 
-                    address: address.to_string(), 
-                    ttl, 
-                    num_addresses, 
-                    suffix
+                Ok(SdpProp::Connection {
+                    net_type: NetworkType::from_str(&tokens[0])?,
+                    address_type: AddressType::from_str(&tokens[1])?,
+                    address: address.to_string(),
+                    ttl,
+                    num_addresses,
+                    suffix,
                 })
-            },
+            }
             'b' => {
                 let tokens = value.split(":").collect::<Vec<&str>>();
 
-                Ok(SdpProp::Bandwidth { 
+                Ok(SdpProp::Bandwidth {
                     r#type: BandwidthType::from_str(&tokens[0])?,
-                    bandwidth: tokens[1].parse()? 
+                    bandwidth: tokens[1].parse()?,
                 })
-            },
+            }
             't' => Ok(SdpProp::Timing {
                 start: tokens[0].parse()?,
-                stop: tokens[1].parse()?
+                stop: tokens[1].parse()?,
             }),
-            'r' => Ok(SdpProp::RepeatTimes { 
-                interval: tokens[0].to_string(), 
-                active_duration: tokens[1].to_string(), 
-                start_offsets: tokens[2..].into_iter().map(|t| t.to_string()).collect::<Vec<String>>()
+            'r' => Ok(SdpProp::RepeatTimes {
+                interval: tokens[0].to_string(),
+                active_duration: tokens[1].to_string(),
+                start_offsets: tokens[2..]
+                    .into_iter()
+                    .map(|t| t.to_string())
+                    .collect::<Vec<String>>(),
             }),
             'z' => {
                 let mut adjustments = Vec::new();
                 for group in tokens.chunks(2) {
-                    adjustments.push(TimeZoneAdjustment { time: group[0].to_string().parse()?, offset: group[1].to_string() });
+                    adjustments.push(TimeZoneAdjustment {
+                        time: group[0].to_string().parse()?,
+                        offset: group[1].to_string(),
+                    });
                 }
 
                 Ok(SdpProp::TimeZone(adjustments))
-            },
-            'k' => Ok(SdpProp::EncryptionKeys(EncryptionKeyMethod::from_str(&value)?)),
+            }
+            'k' => Ok(SdpProp::EncryptionKeys(EncryptionKeyMethod::from_str(
+                &value,
+            )?)),
             'a' => {
                 let tokens = value.split(":").collect::<Vec<&str>>();
 
                 Ok(if tokens.len() > 1 {
-                    SdpProp::Attribute { 
-                        key: tokens[0].to_string(), 
-                        value: Some(tokens[1..].join(":"))
+                    SdpProp::Attribute {
+                        key: tokens[0].to_string(),
+                        value: Some(tokens[1..].join(":")),
                     }
                 } else {
                     SdpProp::Attribute {
                         key: value,
-                        value: None
+                        value: None,
                     }
                 })
-            },
+            }
             // Media lines can have their own attributes, the entire media block will be passed in
             'm' => {
                 let lines = value.split("\n").collect::<Vec<&str>>();
@@ -455,13 +502,19 @@ impl FromStr for SdpProp {
 
                 Ok(SdpProp::Media {
                     r#type: MediaType::from_str(tokens[0])?,
-                    ports: tokens[1].split("/").map(|port| port.parse()).collect::<Result<Vec<_>, _>>()?,
+                    ports: tokens[1]
+                        .split("/")
+                        .map(|port| port.parse())
+                        .collect::<Result<Vec<_>, _>>()?,
                     protocol: MediaProtocol::from_str(tokens[2])?,
                     format: tokens[3..].join(" "),
-                    props: lines[1..].iter().map(|line| MediaProp::from_str(line)).collect::<Result<Vec<_>, _>>()?,
+                    props: lines[1..]
+                        .iter()
+                        .map(|line| MediaProp::from_str(line))
+                        .collect::<Result<Vec<_>, _>>()?,
                 })
-            },
-            _ => Err(ParseError::UnknownKey(key, value))
+            }
+            _ => Err(ParseError::UnknownKey(key, value)),
         }
     }
 }
@@ -471,13 +524,31 @@ impl ToString for SdpProp {
         // TODO: Cut down on code copying from SDPProp to MediaProp
         match self {
             SdpProp::Version(v) => format!("v={v}"),
-            SdpProp::Origin { username, session_id, session_version, net_type, address_type, address } => format!("o={username} {session_id} {session_version} {} {} {address}", net_type.to_string(), address_type.to_string()),
+            SdpProp::Origin {
+                username,
+                session_id,
+                session_version,
+                net_type,
+                address_type,
+                address,
+            } => format!(
+                "o={username} {session_id} {session_version} {} {} {address}",
+                net_type.to_string(),
+                address_type.to_string()
+            ),
             SdpProp::SessionName(name) => format!("s={name}"),
             SdpProp::SessionInformation(info) => format!("i={info}"),
             SdpProp::Uri(uri) => format!("u={uri}"),
             SdpProp::Email(email) => format!("e={email}"),
             SdpProp::Phone(phone) => format!("p={phone}"),
-            SdpProp::Connection { net_type, address_type, address, ttl, num_addresses, suffix } => {
+            SdpProp::Connection {
+                net_type,
+                address_type,
+                address,
+                ttl,
+                num_addresses,
+                suffix,
+            } => {
                 // TTL is required for IPv4
                 let mut address = if *address_type == AddressType::IPv4 || ttl.is_some() {
                     format!("{address}/{}", ttl.unwrap())
@@ -490,15 +561,39 @@ impl ToString for SdpProp {
                 }
 
                 if let Some(suffix) = suffix {
-                    format!("c={} {} {} {}", net_type.to_string(), address_type.to_string(), address, suffix)
+                    format!(
+                        "c={} {} {} {}",
+                        net_type.to_string(),
+                        address_type.to_string(),
+                        address,
+                        suffix
+                    )
                 } else {
-                    format!("c={} {} {}", net_type.to_string(), address_type.to_string(), address)
+                    format!(
+                        "c={} {} {}",
+                        net_type.to_string(),
+                        address_type.to_string(),
+                        address
+                    )
                 }
-            },
-            SdpProp::Bandwidth { r#type, bandwidth } => format!("b={}:{}", r#type.to_string(), bandwidth),
+            }
+            SdpProp::Bandwidth { r#type, bandwidth } => {
+                format!("b={}:{}", r#type.to_string(), bandwidth)
+            }
             SdpProp::Timing { start, stop } => format!("t={start} {stop}"),
-            SdpProp::RepeatTimes { interval, active_duration, start_offsets } => format!("r={interval} {active_duration} {}", start_offsets.join(" ")),
-            SdpProp::TimeZone(adjustments) => format!("z={}", adjustments.iter().map(|adj| format!("{} {}", adj.time, adj.offset)).collect::<Vec<String>>().join(" ")),
+            SdpProp::RepeatTimes {
+                interval,
+                active_duration,
+                start_offsets,
+            } => format!("r={interval} {active_duration} {}", start_offsets.join(" ")),
+            SdpProp::TimeZone(adjustments) => format!(
+                "z={}",
+                adjustments
+                    .iter()
+                    .map(|adj| format!("{} {}", adj.time, adj.offset))
+                    .collect::<Vec<String>>()
+                    .join(" ")
+            ),
             SdpProp::EncryptionKeys(method) => format!("k={}", method.to_string()),
             SdpProp::Attribute { key, value } => {
                 if let Some(value) = value {
@@ -506,12 +601,42 @@ impl ToString for SdpProp {
                 } else {
                     format!("a={key}")
                 }
-            },
-            SdpProp::Media { r#type, ports, protocol, format, props } => {
-                let header = format!("{} {} {} {}", r#type.to_string(), ports.iter().map(|port| port.to_string()).collect::<Vec<String>>().join("/"), protocol.to_string(), format);
+            }
+            SdpProp::Media {
+                r#type,
+                ports,
+                protocol,
+                format,
+                props,
+            } => {
+                let header = format!(
+                    "{} {} {} {}",
+                    r#type.to_string(),
+                    ports
+                        .iter()
+                        .map(|port| port.to_string())
+                        .collect::<Vec<String>>()
+                        .join("/"),
+                    protocol.to_string(),
+                    format
+                );
 
-                format!("m={header}{}", if props.is_empty() { "".to_string() } else { format!("\n{}",props.iter().map(|prop| prop.to_string()).collect::<Vec<String>>().join("\n")) })
-            },
+                format!(
+                    "m={header}{}",
+                    if props.is_empty() {
+                        "".to_string()
+                    } else {
+                        format!(
+                            "\n{}",
+                            props
+                                .iter()
+                                .map(|prop| prop.to_string())
+                                .collect::<Vec<String>>()
+                                .join("\n")
+                        )
+                    }
+                )
+            }
         }
     }
 }
@@ -533,7 +658,7 @@ impl From<ParseIntError> for ParseError {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct SDP {
-    pub props: Vec<SdpProp>
+    pub props: Vec<SdpProp>,
 }
 
 impl FromStr for SDP {
@@ -541,7 +666,10 @@ impl FromStr for SDP {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // Split string
-        let lines = s.split("\n").map(|line| line.to_string()).collect::<Vec<String>>();
+        let lines = s
+            .split("\n")
+            .map(|line| line.to_string())
+            .collect::<Vec<String>>();
 
         // Group media attributes
         // Find indexes of all media lines
@@ -553,33 +681,50 @@ impl FromStr for SDP {
             .collect::<Vec<_>>();
 
         // Combine all media sections into one line per section
-        let lines: Vec<String> = lines.into_iter().enumerate().fold(Vec::new(), |mut acc, (idx, line)| {
-            // If m-line detected or array empty, start a new section
-            if acc.is_empty() || m_indices.contains(&idx) || m_indices.is_empty() || idx < m_indices[0] {
-                acc.push(line);
-                return acc;
-            }
+        let lines: Vec<String> =
+            lines
+                .into_iter()
+                .enumerate()
+                .fold(Vec::new(), |mut acc, (idx, line)| {
+                    // If m-line detected or array empty, start a new section
+                    if acc.is_empty()
+                        || m_indices.contains(&idx)
+                        || m_indices.is_empty()
+                        || idx < m_indices[0]
+                    {
+                        acc.push(line);
+                        return acc;
+                    }
 
-            // Add to current section
-            *acc.last_mut().unwrap() = format!("{}\n{line}", acc.last_mut().unwrap());
+                    // Add to current section
+                    *acc.last_mut().unwrap() = format!("{}\n{line}", acc.last_mut().unwrap());
 
-            acc
-        });
+                    acc
+                });
 
-        Ok(Self { props: lines.into_iter().map(|line| SdpProp::from_str(&line)).collect::<Result<Vec<_>,_>>()? })
+        Ok(Self {
+            props: lines
+                .into_iter()
+                .map(|line| SdpProp::from_str(&line))
+                .collect::<Result<Vec<_>, _>>()?,
+        })
     }
 }
 
 impl ToString for SDP {
     fn to_string(&self) -> String {
-        self.props.iter().map(|prop| prop.to_string()).collect::<Vec<String>>().join("\n")
+        self.props
+            .iter()
+            .map(|prop| prop.to_string())
+            .collect::<Vec<String>>()
+            .join("\n")
     }
 }
 
 fn content_from_line(line: &str) -> Result<(char, String), ParseError> {
     let split = line.split("=").collect::<Vec<&str>>();
     if split.len() < 2 {
-        return Err(ParseError::UnknownToken(line.to_string()))
+        return Err(ParseError::UnknownToken(line.to_string()));
     }
     Ok((split[0].chars().nth(0).unwrap(), split[1..].join("=")))
 }

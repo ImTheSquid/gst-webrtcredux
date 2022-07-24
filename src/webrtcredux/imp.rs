@@ -4,18 +4,29 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use futures::future;
-use gst::{debug, error, ErrorMessage, glib, info, prelude::PadExtManual, trace, traits::{ElementExt, GstObjectExt}};
+use gst::{
+    debug, error, glib, info,
+    prelude::PadExtManual,
+    trace,
+    traits::{ElementExt, GstObjectExt},
+    ErrorMessage,
+};
 use gst_base::subclass::prelude::*;
 use interceptor::registry::Registry;
 use once_cell::sync::Lazy;
 use strum_macros::EnumString;
 use tokio::runtime;
-use webrtc::api::{API, APIBuilder};
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
+use webrtc::api::{APIBuilder, API};
 pub use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::peer_connection::configuration::RTCConfiguration;
+pub use webrtc::peer_connection::offer_answer_options::RTCOfferOptions;
+use webrtc::peer_connection::sdp::sdp_type::RTCSdpType;
+use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection;
+
+use super::sdp::SDP;
 
 static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
     gst::DebugCategory::new(
@@ -33,22 +44,37 @@ static RUNTIME: Lazy<runtime::Runtime> = Lazy::new(|| {
         .unwrap()
 });
 
-
 #[derive(Debug, PartialEq, Eq, EnumString, Clone, Copy)]
 enum MediaType {
-    #[strum(ascii_case_insensitive, serialize = "video/H264", serialize = "video/x-h264")]
+    #[strum(
+        ascii_case_insensitive,
+        serialize = "video/H264",
+        serialize = "video/x-h264"
+    )]
     H264,
     #[strum(ascii_case_insensitive, serialize = "video/x-vp8")]
     VP8,
     #[strum(ascii_case_insensitive, serialize = "video/x-vp9")]
     VP9,
-    #[strum(ascii_case_insensitive, serialize = "audio/opus", serialize = "audio/x-opus")]
+    #[strum(
+        ascii_case_insensitive,
+        serialize = "audio/opus",
+        serialize = "audio/x-opus"
+    )]
     Opus,
     #[strum(ascii_case_insensitive, serialize = "audio/G722")]
     G722,
-    #[strum(ascii_case_insensitive, serialize = "audio/PCMU", serialize = "audio/x-mulaw")]
+    #[strum(
+        ascii_case_insensitive,
+        serialize = "audio/PCMU",
+        serialize = "audio/x-mulaw"
+    )]
     Mulaw,
-    #[strum(ascii_case_insensitive, serialize = "audio/PCMA", serialize = "audio/x-alaw")]
+    #[strum(
+        ascii_case_insensitive,
+        serialize = "audio/PCMA",
+        serialize = "audio/x-alaw"
+    )]
     Alaw,
 }
 
@@ -57,16 +83,22 @@ enum MediaState {
     NotConfigured,
     TypeConfigured(MediaType),
     IdConfigured(String),
-    Configured { media: MediaType, id: String }
+    Configured { media: MediaType, id: String },
 }
 
 impl MediaState {
     fn add_id(&self, new_id: &str) -> Self {
         match self {
             MediaState::NotConfigured => MediaState::IdConfigured(new_id.to_string()),
-            MediaState::TypeConfigured(media) => MediaState::Configured { media: *media, id: new_id.to_string() },
+            MediaState::TypeConfigured(media) => MediaState::Configured {
+                media: *media,
+                id: new_id.to_string(),
+            },
             MediaState::IdConfigured(_) => MediaState::IdConfigured(new_id.to_string()),
-            MediaState::Configured { media, id: _ } => MediaState::Configured { media: *media, id: new_id.to_string() },
+            MediaState::Configured { media, id: _ } => MediaState::Configured {
+                media: *media,
+                id: new_id.to_string(),
+            },
         }
     }
 
@@ -74,8 +106,14 @@ impl MediaState {
         match self {
             MediaState::NotConfigured => MediaState::TypeConfigured(new_media),
             MediaState::TypeConfigured(_) => MediaState::TypeConfigured(new_media),
-            MediaState::IdConfigured(id) => MediaState::Configured { media: new_media, id: id.to_owned() },
-            MediaState::Configured { media: _, id } => MediaState::Configured { media: new_media, id: id.to_owned() },
+            MediaState::IdConfigured(id) => MediaState::Configured {
+                media: new_media,
+                id: id.to_owned(),
+            },
+            MediaState::Configured { media: _, id } => MediaState::Configured {
+                media: new_media,
+                id: id.to_owned(),
+            },
         }
     }
 }
@@ -90,17 +128,17 @@ struct State {
     video_state: HashMap<usize, MediaState>,
     next_video_pad_id: usize,
     audio_state: HashMap<usize, MediaState>,
-    next_audio_pad_id: usize
+    next_audio_pad_id: usize,
 }
 
 struct WebRtcSettings {
-    config: Option<RTCConfiguration>
+    config: Option<RTCConfiguration>,
 }
 
 impl Default for WebRtcSettings {
     fn default() -> Self {
         WebRtcSettings {
-            config: Some(RTCConfiguration::default())
+            config: Some(RTCConfiguration::default()),
         }
     }
 }
@@ -111,9 +149,7 @@ struct GenericSettings {
 
 impl Default for GenericSettings {
     fn default() -> Self {
-        Self {
-            timeout: 15,
-        }
+        Self { timeout: 15 }
     }
 }
 
@@ -123,7 +159,7 @@ pub struct WebRtcRedux {
     webrtc_state: Arc<Mutex<Option<WebRtcState>>>,
     settings: Arc<Mutex<GenericSettings>>,
     webrtc_settings: Arc<Mutex<WebRtcSettings>>,
-    canceller: Mutex<Option<future::AbortHandle>>
+    canceller: Mutex<Option<future::AbortHandle>>,
 }
 
 impl WebRtcRedux {
@@ -141,9 +177,9 @@ impl WebRtcRedux {
     }
 
     fn wait<F, T>(&self, future: F) -> Result<T, Option<ErrorMessage>>
-        where
-            F: Send + Future<Output=Result<T, ErrorMessage>>,
-            T: Send + 'static,
+    where
+        F: Send + Future<Output = Result<T, ErrorMessage>>,
+        T: Send + 'static,
     {
         let timeout = self.settings.lock().unwrap().timeout;
 
@@ -157,7 +193,9 @@ impl WebRtcRedux {
             if timeout == 0 {
                 future.await
             } else {
-                let res = tokio::time::timeout(std::time::Duration::from_secs(timeout.into()), future).await;
+                let res =
+                    tokio::time::timeout(std::time::Duration::from_secs(timeout.into()), future)
+                        .await;
 
                 match res {
                     Ok(res) => res,
@@ -191,44 +229,165 @@ impl WebRtcRedux {
     pub fn set_stream_id(&self, pad_name: &str, stream_id: &str) -> Result<(), ErrorMessage> {
         let split = pad_name.split("_").collect::<Vec<_>>();
         if split.len() != 2 {
-            return Err(gst::error_msg!(gst::ResourceError::NotFound, [&format!("Pad with name '{}' is invalid", pad_name)]));
+            return Err(gst::error_msg!(
+                gst::ResourceError::NotFound,
+                [&format!("Pad with name '{}' is invalid", pad_name)]
+            ));
         }
 
         let id: usize = match split[1].parse() {
             Ok(val) => val,
-            Err(_) => return Err(gst::error_msg!(gst::ResourceError::NotFound, [&format!("Couldn't parse '{}' into number", split[1])]))
+            Err(_) => {
+                return Err(gst::error_msg!(
+                    gst::ResourceError::NotFound,
+                    [&format!("Couldn't parse '{}' into number", split[1])]
+                ))
+            }
         };
 
         match split[0] {
             "video" => {
-                if !self.state.lock().unwrap().as_ref().unwrap().video_state.contains_key(&id) {
-                    return Err(gst::error_msg!(gst::ResourceError::NotFound, [&format!("Invalid ID: {}", id)]));
+                if !self
+                    .state
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .unwrap()
+                    .video_state
+                    .contains_key(&id)
+                {
+                    return Err(gst::error_msg!(
+                        gst::ResourceError::NotFound,
+                        [&format!("Invalid ID: {}", id)]
+                    ));
                 }
 
                 let current = {
                     let state = self.state.lock().unwrap();
-                    state.as_ref().unwrap().video_state.get(&id).unwrap().to_owned()
+                    state
+                        .as_ref()
+                        .unwrap()
+                        .video_state
+                        .get(&id)
+                        .unwrap()
+                        .to_owned()
                 };
 
-                self.state.lock().unwrap().as_mut().unwrap().video_state.insert(id, current.add_id(stream_id));
+                self.state
+                    .lock()
+                    .unwrap()
+                    .as_mut()
+                    .unwrap()
+                    .video_state
+                    .insert(id, current.add_id(stream_id));
 
                 Ok(())
-            },
+            }
             "audio" => {
-                if !self.state.lock().unwrap().as_ref().unwrap().audio_state.contains_key(&id) {
-                    return Err(gst::error_msg!(gst::ResourceError::NotFound, [&format!("Invalid ID: {}", id)]));
+                if !self
+                    .state
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .unwrap()
+                    .audio_state
+                    .contains_key(&id)
+                {
+                    return Err(gst::error_msg!(
+                        gst::ResourceError::NotFound,
+                        [&format!("Invalid ID: {}", id)]
+                    ));
                 }
 
                 let current = {
                     let state = self.state.lock().unwrap();
-                    state.as_ref().unwrap().audio_state.get(&id).unwrap().to_owned()
+                    state
+                        .as_ref()
+                        .unwrap()
+                        .audio_state
+                        .get(&id)
+                        .unwrap()
+                        .to_owned()
                 };
 
-                self.state.lock().unwrap().as_mut().unwrap().audio_state.insert(id, current.add_id(stream_id));
+                self.state
+                    .lock()
+                    .unwrap()
+                    .as_mut()
+                    .unwrap()
+                    .audio_state
+                    .insert(id, current.add_id(stream_id));
 
                 Ok(())
-            },
-            _ => Err(gst::error_msg!(gst::ResourceError::NotFound, [&format!("Pad with type '{}' not found", split[0])]))
+            }
+            _ => Err(gst::error_msg!(
+                gst::ResourceError::NotFound,
+                [&format!("Pad with type '{}' not found", split[0])]
+            )),
+        }
+    }
+
+    pub async fn create_offer(
+        &self,
+        options: Option<RTCOfferOptions>,
+    ) -> Result<SDP, ErrorMessage> {
+        let webrtc_state = self.webrtc_state.lock().unwrap();
+        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state.as_ref().unwrap())?;
+
+        match peer_connection.create_offer(options).await {
+            Ok(res) => Ok(SDP::from_str(&res.sdp).unwrap()),
+            Err(e) => Err(gst::error_msg!(
+                gst::ResourceError::Failed,
+                [&format!("Failed to create offer: {:?}", e)]
+            )),
+        }
+    }
+
+    pub async fn set_local_description(&self, sdp: &SDP) -> Result<(), ErrorMessage> {
+        let webrtc_state = self.webrtc_state.lock().unwrap();
+        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state.as_ref().unwrap())?;
+
+        let mut default = RTCSessionDescription::default();
+        default.sdp = sdp.to_string();
+        default.sdp_type = RTCSdpType::Offer;
+
+        if let Err(e) = peer_connection.set_local_description(default).await {
+            return Err(gst::error_msg!(
+                gst::ResourceError::Failed,
+                [&format!("Failed to set local description: {:?}", e)]
+            ));
+        }
+
+        Ok(())
+    }
+
+    pub async fn set_remote_description(&self, sdp: &SDP) -> Result<(), ErrorMessage> {
+        let webrtc_state = self.webrtc_state.lock().unwrap();
+        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state.as_ref().unwrap())?;
+
+        let mut default = RTCSessionDescription::default();
+        default.sdp = sdp.to_string();
+        default.sdp_type = RTCSdpType::Answer;
+
+        if let Err(e) = peer_connection.set_remote_description(default).await {
+            return Err(gst::error_msg!(
+                gst::ResourceError::Failed,
+                [&format!("Failed to set local description: {:?}", e)]
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn get_peer_connection(state: &WebRtcState) -> Result<&RTCPeerConnection, ErrorMessage> {
+        match &state.peer_connection {
+            Some(conn) => Ok(conn),
+            None => {
+                return Err(gst::error_msg!(
+                    gst::ResourceError::Failed,
+                    ["Peer connection is not set, make sure plugin is started"]
+                ))
+            }
         }
     }
 }
@@ -242,7 +401,8 @@ impl ObjectSubclass for WebRtcRedux {
     fn with_class(_klass: &Self::Class) -> Self {
         let mut media_engine = MediaEngine::default();
         let mut registry = Registry::new();
-        registry = register_default_interceptors(registry, &mut media_engine).expect("Failed to register default interceptors");
+        registry = register_default_interceptors(registry, &mut media_engine)
+            .expect("Failed to register default interceptors");
         let api = APIBuilder::new()
             .with_media_engine(media_engine)
             .with_interceptor_registry(registry)
@@ -259,8 +419,13 @@ impl ObjectSubclass for WebRtcRedux {
 
         let webrtc_settings = Arc::new(Mutex::new(Default::default()));
 
-
-        Self { state, webrtc_state, settings, webrtc_settings, canceller: Mutex::new(None) }
+        Self {
+            state,
+            webrtc_state,
+            settings,
+            webrtc_settings,
+            canceller: Mutex::new(None),
+        }
     }
 }
 
@@ -295,7 +460,8 @@ impl ElementImpl for WebRtcRedux {
                 gst::PadDirection::Sink,
                 gst::PadPresence::Request,
                 &video_caps.to_owned(),
-            ).unwrap();
+            )
+            .unwrap();
 
             //MIME_TYPE_OPUS
             let mut audio_caps = gst::Caps::new_empty_simple("audio/x-opus");
@@ -312,7 +478,8 @@ impl ElementImpl for WebRtcRedux {
                 gst::PadDirection::Sink,
                 gst::PadPresence::Request,
                 &audio_caps.to_owned(),
-            ).unwrap();
+            )
+            .unwrap();
 
             vec![video_sink, audio_sink]
         });
@@ -320,27 +487,52 @@ impl ElementImpl for WebRtcRedux {
         PAD_TEMPLATES.as_ref()
     }
 
-    fn request_new_pad(&self, element: &Self::Type, templ: &gst::PadTemplate, _name: Option<String>, _caps: Option<&gst::Caps>) -> Option<gst::Pad> {
+    fn request_new_pad(
+        &self,
+        element: &Self::Type,
+        templ: &gst::PadTemplate,
+        _name: Option<String>,
+        _caps: Option<&gst::Caps>,
+    ) -> Option<gst::Pad> {
         let mut state = self.state.lock().unwrap();
         let state = state.as_mut().unwrap();
 
         // Set up audio and video pads along with callbacks for events and data
         match templ.name_template() {
             "video_%u" => {
-                let pad = gst::Pad::from_template(templ, Some(&format!("video_{}", state.next_video_pad_id)));
+                let pad = gst::Pad::from_template(
+                    templ,
+                    Some(&format!("video_{}", state.next_video_pad_id)),
+                );
                 unsafe {
                     let id = state.next_video_pad_id;
                     let state = self.state.clone();
                     pad.set_event_function(move |_pad, _parent, event| {
                         let structure = event.structure().unwrap();
                         if structure.name() == "GstEventCaps" {
-                            let mime = structure.get::<gst::Caps>("caps").unwrap().structure(0).unwrap().name();
+                            let mime = structure
+                                .get::<gst::Caps>("caps")
+                                .unwrap()
+                                .structure(0)
+                                .unwrap()
+                                .name();
 
                             let current = {
                                 let state = state.lock().unwrap();
-                                state.as_ref().unwrap().video_state.get(&id).unwrap().to_owned()
+                                state
+                                    .as_ref()
+                                    .unwrap()
+                                    .video_state
+                                    .get(&id)
+                                    .unwrap()
+                                    .to_owned()
                             };
-                            state.lock().unwrap().as_mut().unwrap().video_state.insert(id, current.add_media(MediaType::from_str(mime).expect("Failed to parse mime type")));
+                            state.lock().unwrap().as_mut().unwrap().video_state.insert(
+                                id,
+                                current.add_media(
+                                    MediaType::from_str(mime).expect("Failed to parse mime type"),
+                                ),
+                            );
 
                             debug!(CAT, "Video media type set to: {}", mime);
                         }
@@ -348,35 +540,54 @@ impl ElementImpl for WebRtcRedux {
                     });
 
                     pad.set_chain_function(|_pad, _parent, buffer| {
-                        let map = buffer.map_readable().map_err(|_| {
-                            gst::FlowError::Error
-                        })?;
+                        let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
                         trace!(CAT, "Video map Size: {}", map.size());
                         Ok(gst::FlowSuccess::Ok)
                     });
                 }
                 element.add_pad(&pad).unwrap();
 
-                state.video_state.insert(state.next_video_pad_id, MediaState::NotConfigured);
+                state
+                    .video_state
+                    .insert(state.next_video_pad_id, MediaState::NotConfigured);
                 state.next_video_pad_id += 1;
 
                 Some(pad)
             }
             "audio_%u" => {
-                let pad = gst::Pad::from_template(templ, Some(&format!("audio_{}", state.next_audio_pad_id)));
+                let pad = gst::Pad::from_template(
+                    templ,
+                    Some(&format!("audio_{}", state.next_audio_pad_id)),
+                );
                 unsafe {
                     let id = state.next_audio_pad_id;
                     let state = self.state.clone();
                     pad.set_event_function(move |_pad, _parent, event| {
                         let structure = event.structure().unwrap();
                         if structure.name() == "GstEventCaps" {
-                            let mime = structure.get::<gst::Caps>("caps").unwrap().structure(0).unwrap().name();
-                            
+                            let mime = structure
+                                .get::<gst::Caps>("caps")
+                                .unwrap()
+                                .structure(0)
+                                .unwrap()
+                                .name();
+
                             let current = {
                                 let state = state.lock().unwrap();
-                                state.as_ref().unwrap().audio_state.get(&id).unwrap().to_owned()
+                                state
+                                    .as_ref()
+                                    .unwrap()
+                                    .audio_state
+                                    .get(&id)
+                                    .unwrap()
+                                    .to_owned()
                             };
-                            state.lock().unwrap().as_mut().unwrap().audio_state.insert(id, current.add_media(MediaType::from_str(mime).expect("Failed to parse mime type")));
+                            state.lock().unwrap().as_mut().unwrap().audio_state.insert(
+                                id,
+                                current.add_media(
+                                    MediaType::from_str(mime).expect("Failed to parse mime type"),
+                                ),
+                            );
 
                             debug!(CAT, "Audio media type set to: {}", mime);
                         }
@@ -384,16 +595,16 @@ impl ElementImpl for WebRtcRedux {
                     });
 
                     pad.set_chain_function(|_pad, _parent, buffer| {
-                        let map = buffer.map_readable().map_err(|_| {
-                            gst::FlowError::Error
-                        })?;
+                        let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
                         trace!(CAT, "Audio map Size: {}", map.size());
                         Ok(gst::FlowSuccess::Ok)
                     });
                 }
                 element.add_pad(&pad).unwrap();
 
-                state.audio_state.insert(state.next_audio_pad_id, MediaState::NotConfigured);
+                state
+                    .audio_state
+                    .insert(state.next_audio_pad_id, MediaState::NotConfigured);
                 state.next_audio_pad_id += 1;
 
                 Some(pad)
@@ -410,9 +621,21 @@ impl ElementImpl for WebRtcRedux {
         let split = name.split("_").collect::<Vec<_>>();
         let id: usize = split[1].parse().unwrap();
         if split[0] == "video" {
-            self.state.lock().unwrap().as_mut().unwrap().video_state.remove(&id);
+            self.state
+                .lock()
+                .unwrap()
+                .as_mut()
+                .unwrap()
+                .video_state
+                .remove(&id);
         } else {
-            self.state.lock().unwrap().as_mut().unwrap().audio_state.remove(&id);
+            self.state
+                .lock()
+                .unwrap()
+                .as_mut()
+                .unwrap()
+                .audio_state
+                .remove(&id);
         };
 
         self.parent_release_pad(element, pad);
@@ -428,10 +651,35 @@ impl GstObjectImpl for WebRtcRedux {}
 impl BaseSinkImpl for WebRtcRedux {
     fn start(&self, _sink: &Self::Type) -> Result<(), ErrorMessage> {
         // Make sure all pads are configured with a stream ID
-        let audio_ok = self.state.lock().unwrap().as_ref().unwrap().audio_state.values().all(|val| match *val { MediaState::IdConfigured(_) => true, _ => false });
-        let video_ok = self.state.lock().unwrap().as_ref().unwrap().video_state.values().all(|val| match *val { MediaState::IdConfigured(_) => true, _ => false });
+        let audio_ok = self
+            .state
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .audio_state
+            .values()
+            .all(|val| match *val {
+                MediaState::IdConfigured(_) => true,
+                _ => false,
+            });
+        let video_ok = self
+            .state
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .video_state
+            .values()
+            .all(|val| match *val {
+                MediaState::IdConfigured(_) => true,
+                _ => false,
+            });
         if !(audio_ok && video_ok) {
-            return Err(gst::error_msg!(gst::LibraryError::Settings, ["Not all pads are fully-configured"]));
+            return Err(gst::error_msg!(
+                gst::LibraryError::Settings,
+                ["Not all pads are fully-configured"]
+            ));
         }
 
         let peer_connection = match self.webrtc_settings.lock().unwrap().config.take() {
@@ -441,27 +689,44 @@ impl BaseSinkImpl for WebRtcRedux {
                 let webrtc_state = webrtc_state_lock.as_mut().unwrap();
 
                 let future = async move {
-                    webrtc_state.api.new_peer_connection(config).await.map_err(|e| {
-                        gst::error_msg!(
-                            gst::ResourceError::Failed,
-                            ["Failed to create PeerConnection: {:?}", e]
-                        )
-                    })
+                    webrtc_state
+                        .api
+                        .new_peer_connection(config)
+                        .await
+                        .map_err(|e| {
+                            gst::error_msg!(
+                                gst::ResourceError::Failed,
+                                ["Failed to create PeerConnection: {:?}", e]
+                            )
+                        })
                 };
 
                 match self.wait(future) {
                     Ok(peer_connection) => peer_connection,
-                    Err(e) => return Err(e.unwrap_or_else(|| gst::error_msg!(gst::ResourceError::Failed, ["Failed to wait for PeerConnection"])))
+                    Err(e) => {
+                        return Err(e.unwrap_or_else(|| {
+                            gst::error_msg!(
+                                gst::ResourceError::Failed,
+                                ["Failed to wait for PeerConnection"]
+                            )
+                        }))
+                    }
                 }
             }
             None => {
-                return Err(gst::error_msg!(gst::LibraryError::Settings, ["WebRTC configuration not set"]));
+                return Err(gst::error_msg!(
+                    gst::LibraryError::Settings,
+                    ["WebRTC configuration not set"]
+                ));
             }
         };
 
-
-        self.webrtc_state.lock().unwrap().as_mut().unwrap().peer_connection = Some(peer_connection);
-
+        self.webrtc_state
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .peer_connection = Some(peer_connection);
 
         info!(CAT, "Started");
         Ok(())
