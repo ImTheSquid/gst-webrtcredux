@@ -38,16 +38,7 @@ impl FromStr for MediaProp {
             'i' => Ok(MediaProp::Title(value)),
             'c' => {
                 let address_split = tokens[2].split('/').collect::<Vec<&str>>();
-                let (address, ttl, num_addresses) = match address_split.len() {
-                    1 => (address_split[0], None, None),
-                    2 => (address_split[0], Some(address_split[1].parse()?), None),
-                    3 => (
-                        address_split[0],
-                        Some(address_split[1].parse()?),
-                        Some(address_split[2].parse()?),
-                    ),
-                    _ => unreachable!(),
-                };
+                let (address, ttl, num_addresses) = get_options_from_address_split(address_split)?;
 
                 let suffix = if tokens.len() > 3 {
                     Some(tokens[3..].join(" "))
@@ -118,22 +109,7 @@ impl ToString for MediaProp {
                     address = format!("{address}/{num_addresses}")
                 }
 
-                if let Some(suffix) = suffix {
-                    format!(
-                        "c={} {} {} {}",
-                        net_type.to_string(),
-                        address_type.to_string(),
-                        address,
-                        suffix
-                    )
-                } else {
-                    format!(
-                        "c={} {} {}",
-                        net_type.to_string(),
-                        address_type.to_string(),
-                        address
-                    )
-                }
+                build_connection_lines(net_type, address_type, suffix, &address)
             }
             MediaProp::Bandwidth { r#type, bandwidth } => {
                 format!("b={}:{}", r#type.to_string(), bandwidth)
@@ -420,16 +396,7 @@ impl FromStr for SdpProp {
             'p' => Ok(SdpProp::Phone(value)),
             'c' => {
                 let address_split = tokens[2].split('/').collect::<Vec<&str>>();
-                let (address, ttl, num_addresses) = match address_split.len() {
-                    1 => (address_split[0], None, None),
-                    2 => (address_split[0], Some(address_split[1].parse()?), None),
-                    3 => (
-                        address_split[0],
-                        Some(address_split[1].parse()?),
-                        Some(address_split[2].parse()?),
-                    ),
-                    _ => unreachable!(),
-                };
+                let (address, ttl, num_addresses) = get_options_from_address_split(address_split)?;
 
                 let suffix = if tokens.len() > 3 {
                     Some(tokens[3..].join(" "))
@@ -560,22 +527,7 @@ impl ToString for SdpProp {
                     address = format!("{address}/{num_addresses}")
                 }
 
-                if let Some(suffix) = suffix {
-                    format!(
-                        "c={} {} {} {}",
-                        net_type.to_string(),
-                        address_type.to_string(),
-                        address,
-                        suffix
-                    )
-                } else {
-                    format!(
-                        "c={} {} {}",
-                        net_type.to_string(),
-                        address_type.to_string(),
-                        address
-                    )
-                }
+                build_connection_lines(net_type, address_type, suffix, &address)
             }
             SdpProp::Bandwidth { r#type, bandwidth } => {
                 format!("b={}:{}", r#type.to_string(), bandwidth)
@@ -727,4 +679,36 @@ fn content_from_line(line: &str) -> Result<(char, String), ParseError> {
         return Err(ParseError::UnknownToken(line.to_string()));
     }
     Ok((split[0].chars().next().unwrap(), split[1..].join("=")))
+}
+
+fn get_options_from_address_split(address_split: Vec<&str>) -> Result<(&str, Option<usize>, Option<usize>), ParseError> {
+    Ok(match address_split.len() {
+        1 => (address_split[0], None, None),
+        2 => (address_split[0], Some(address_split[1].parse()?), None),
+        3 => (
+            address_split[0],
+            Some(address_split[1].parse()?),
+            Some(address_split[2].parse()?),
+        ),
+        _ => unreachable!(),
+    })
+}
+
+fn build_connection_lines(net_type: &NetworkType, address_type: &AddressType, suffix: &Option<String>, address: &String) -> String {
+    if let Some(suffix) = suffix {
+        format!(
+            "c={} {} {} {}",
+            net_type.to_string(),
+            address_type.to_string(),
+            address,
+            suffix
+        )
+    } else {
+        format!(
+            "c={} {} {}",
+            net_type.to_string(),
+            address_type.to_string(),
+            address
+        )
+    }
 }
