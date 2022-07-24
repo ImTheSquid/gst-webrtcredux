@@ -28,6 +28,16 @@ fn init() {
     })
 }
 
+fn init_tests_dir() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+
+    INIT.call_once(|| {
+        let _ = std::fs::remove_dir_all("./target/debug/tests");
+        std::fs::create_dir_all("./target/debug/tests").expect("Failed to create tests dir");
+    })
+}
+
 #[enum_dispatch(Encoder)]
 pub trait GstEncoder {
     fn to_gst_encoder(&self) -> Result<Element, BoolError>;
@@ -179,9 +189,10 @@ fn pipeline_creation_test(encoders: Vec<Encoder>) {
 
     // Debug diagram
     let out = debug_bin_to_dot_data(&pipeline, DebugGraphDetails::ALL);
+    init_tests_dir();
     std::fs::write(
         format!(
-            "./target/debug/{}.dot",
+            "./target/debug/tests/{}.dot",
             encoders
                 .iter()
                 .map(|e| e.to_string())
