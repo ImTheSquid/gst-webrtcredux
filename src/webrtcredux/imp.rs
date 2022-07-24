@@ -229,7 +229,7 @@ impl WebRtcRedux {
     }
 
     pub fn set_stream_id(&self, pad_name: &str, stream_id: &str) -> Result<(), ErrorMessage> {
-        let split = pad_name.split("_").collect::<Vec<_>>();
+        let split = pad_name.split('_').collect::<Vec<_>>();
         if split.len() != 2 {
             return Err(gst::error_msg!(
                 gst::ResourceError::NotFound,
@@ -334,7 +334,7 @@ impl WebRtcRedux {
         options: Option<RTCOfferOptions>,
     ) -> Result<SDP, ErrorMessage> {
         let webrtc_state = self.webrtc_state.lock().unwrap();
-        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state.as_ref().unwrap())?;
+        let peer_connection = WebRtcRedux::get_peer_connection(webrtc_state.as_ref().unwrap())?;
 
         match peer_connection.create_offer(options).await {
             Ok(res) => Ok(SDP::from_str(&res.sdp).unwrap()),
@@ -347,7 +347,7 @@ impl WebRtcRedux {
 
     pub async fn set_local_description(&self, sdp: &SDP) -> Result<(), ErrorMessage> {
         let webrtc_state = self.webrtc_state.lock().unwrap();
-        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state.as_ref().unwrap())?;
+        let peer_connection = WebRtcRedux::get_peer_connection(webrtc_state.as_ref().unwrap())?;
 
         let mut default = RTCSessionDescription::default();
         default.sdp = sdp.to_string();
@@ -365,7 +365,7 @@ impl WebRtcRedux {
 
     pub async fn set_remote_description(&self, sdp: &SDP) -> Result<(), ErrorMessage> {
         let webrtc_state = self.webrtc_state.lock().unwrap();
-        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state.as_ref().unwrap())?;
+        let peer_connection = WebRtcRedux::get_peer_connection(webrtc_state.as_ref().unwrap())?;
 
         let mut default = RTCSessionDescription::default();
         default.sdp = sdp.to_string();
@@ -386,7 +386,7 @@ impl WebRtcRedux {
         F: FnMut() + Send + Sync + 'static,
     {
         let webrtc_state = self.webrtc_state.lock().unwrap();
-        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state.as_ref().unwrap())?;
+        let peer_connection = WebRtcRedux::get_peer_connection(webrtc_state.as_ref().unwrap())?;
 
         peer_connection
             .on_negotiation_needed(Box::new(move || {
@@ -403,7 +403,7 @@ impl WebRtcRedux {
         F: FnMut(Option<RTCIceCandidate>) + Send + Sync + 'static,
     {
         let webrtc_state = self.webrtc_state.lock().unwrap();
-        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state.as_ref().unwrap())?;
+        let peer_connection = WebRtcRedux::get_peer_connection(webrtc_state.as_ref().unwrap())?;
 
         peer_connection
             .on_ice_candidate(Box::new(move |candidate| {
@@ -420,7 +420,7 @@ impl WebRtcRedux {
         F: FnMut(RTCIceGathererState) + Send + Sync + 'static,
     {
         let webrtc_state = self.webrtc_state.lock().unwrap();
-        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state.as_ref().unwrap())?;
+        let peer_connection = WebRtcRedux::get_peer_connection(webrtc_state.as_ref().unwrap())?;
 
         peer_connection
             .on_ice_gathering_state_change(Box::new(move |state| {
@@ -437,7 +437,7 @@ impl WebRtcRedux {
         candidate: RTCIceCandidateInit,
     ) -> Result<(), ErrorMessage> {
         let webrtc_state = self.webrtc_state.lock().unwrap();
-        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state.as_ref().unwrap())?;
+        let peer_connection = WebRtcRedux::get_peer_connection(webrtc_state.as_ref().unwrap())?;
 
         if let Err(e) = peer_connection.add_ice_candidate(candidate).await {
             return Err(gst::error_msg!(
@@ -453,7 +453,7 @@ impl WebRtcRedux {
         match &state.peer_connection {
             Some(conn) => Ok(conn),
             None => {
-                return Err(gst::error_msg!(
+                Err(gst::error_msg!(
                     gst::ResourceError::Failed,
                     ["Peer connection is not set, make sure plugin is started"]
                 ))
@@ -688,7 +688,7 @@ impl ElementImpl for WebRtcRedux {
 
     fn release_pad(&self, element: &Self::Type, pad: &gst::Pad) {
         let name = pad.name();
-        let split = name.split("_").collect::<Vec<_>>();
+        let split = name.split('_').collect::<Vec<_>>();
         let id: usize = split[1].parse().unwrap();
         if split[0] == "video" {
             self.state
@@ -729,10 +729,7 @@ impl BaseSinkImpl for WebRtcRedux {
             .unwrap()
             .audio_state
             .values()
-            .all(|val| match *val {
-                MediaState::IdConfigured(_) => true,
-                _ => false,
-            });
+            .all(|val| matches!(*val, MediaState::IdConfigured(_)));
         let video_ok = self
             .state
             .lock()
@@ -741,10 +738,7 @@ impl BaseSinkImpl for WebRtcRedux {
             .unwrap()
             .video_state
             .values()
-            .all(|val| match *val {
-                MediaState::IdConfigured(_) => true,
-                _ => false,
-            });
+            .all(|val| matches!(*val, MediaState::IdConfigured(_)));
         if !(audio_ok && video_ok) {
             return Err(gst::error_msg!(
                 gst::LibraryError::Settings,

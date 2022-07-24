@@ -32,12 +32,12 @@ impl FromStr for MediaProp {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let (key, value) = content_from_line(s)?;
-        let tokens = value.split(" ").collect::<Vec<&str>>();
+        let tokens = value.split(' ').collect::<Vec<&str>>();
 
         match key {
             'i' => Ok(MediaProp::Title(value)),
             'c' => {
-                let address_split = tokens[2].split("/").collect::<Vec<&str>>();
+                let address_split = tokens[2].split('/').collect::<Vec<&str>>();
                 let (address, ttl, num_addresses) = match address_split.len() {
                     1 => (address_split[0], None, None),
                     2 => (address_split[0], Some(address_split[1].parse()?), None),
@@ -56,8 +56,8 @@ impl FromStr for MediaProp {
                 };
 
                 Ok(MediaProp::Connection {
-                    net_type: NetworkType::from_str(&tokens[0])?,
-                    address_type: AddressType::from_str(&tokens[1])?,
+                    net_type: NetworkType::from_str(tokens[0])?,
+                    address_type: AddressType::from_str(tokens[1])?,
                     address: address.to_string(),
                     ttl,
                     num_addresses,
@@ -65,10 +65,10 @@ impl FromStr for MediaProp {
                 })
             }
             'b' => {
-                let tokens = value.split(":").collect::<Vec<&str>>();
+                let tokens = value.split(':').collect::<Vec<&str>>();
 
                 Ok(MediaProp::Bandwidth {
-                    r#type: BandwidthType::from_str(&tokens[0])?,
+                    r#type: BandwidthType::from_str(tokens[0])?,
                     bandwidth: tokens[1].parse()?,
                 })
             }
@@ -76,7 +76,7 @@ impl FromStr for MediaProp {
                 &value,
             )?)),
             'a' => {
-                let tokens = value.split(":").collect::<Vec<&str>>();
+                let tokens = value.split(':').collect::<Vec<&str>>();
 
                 Ok(if tokens.len() > 1 {
                     MediaProp::Attribute {
@@ -318,7 +318,7 @@ impl FromStr for EncryptionKeyMethod {
             return Ok(EncryptionKeyMethod::Prompt);
         }
 
-        let split = s.split(":").collect::<Vec<&str>>();
+        let split = s.split(':').collect::<Vec<&str>>();
         let key = split[1..].join(":");
         match split[0] {
             "clear" => Ok(EncryptionKeyMethod::Clear(key)),
@@ -400,7 +400,7 @@ impl FromStr for SdpProp {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let (key, value) = content_from_line(s)?;
-        let tokens = value.split(" ").collect::<Vec<&str>>();
+        let tokens = value.split(' ').collect::<Vec<&str>>();
 
         // TODO: Cut down on code copying from SDPProp to MediaProp
         match key {
@@ -419,7 +419,7 @@ impl FromStr for SdpProp {
             'e' => Ok(SdpProp::Email(value)),
             'p' => Ok(SdpProp::Phone(value)),
             'c' => {
-                let address_split = tokens[2].split("/").collect::<Vec<&str>>();
+                let address_split = tokens[2].split('/').collect::<Vec<&str>>();
                 let (address, ttl, num_addresses) = match address_split.len() {
                     1 => (address_split[0], None, None),
                     2 => (address_split[0], Some(address_split[1].parse()?), None),
@@ -438,8 +438,8 @@ impl FromStr for SdpProp {
                 };
 
                 Ok(SdpProp::Connection {
-                    net_type: NetworkType::from_str(&tokens[0])?,
-                    address_type: AddressType::from_str(&tokens[1])?,
+                    net_type: NetworkType::from_str(tokens[0])?,
+                    address_type: AddressType::from_str(tokens[1])?,
                     address: address.to_string(),
                     ttl,
                     num_addresses,
@@ -447,10 +447,10 @@ impl FromStr for SdpProp {
                 })
             }
             'b' => {
-                let tokens = value.split(":").collect::<Vec<&str>>();
+                let tokens = value.split(':').collect::<Vec<&str>>();
 
                 Ok(SdpProp::Bandwidth {
-                    r#type: BandwidthType::from_str(&tokens[0])?,
+                    r#type: BandwidthType::from_str(tokens[0])?,
                     bandwidth: tokens[1].parse()?,
                 })
             }
@@ -462,7 +462,7 @@ impl FromStr for SdpProp {
                 interval: tokens[0].to_string(),
                 active_duration: tokens[1].to_string(),
                 start_offsets: tokens[2..]
-                    .into_iter()
+                    .iter()
                     .map(|t| t.to_string())
                     .collect::<Vec<String>>(),
             }),
@@ -481,7 +481,7 @@ impl FromStr for SdpProp {
                 &value,
             )?)),
             'a' => {
-                let tokens = value.split(":").collect::<Vec<&str>>();
+                let tokens = value.split(':').collect::<Vec<&str>>();
 
                 Ok(if tokens.len() > 1 {
                     SdpProp::Attribute {
@@ -497,13 +497,13 @@ impl FromStr for SdpProp {
             }
             // Media lines can have their own attributes, the entire media block will be passed in
             'm' => {
-                let lines = value.split("\n").collect::<Vec<&str>>();
-                let tokens = lines[0].split(" ").collect::<Vec<&str>>();
+                let lines = value.split('\n').collect::<Vec<&str>>();
+                let tokens = lines[0].split(' ').collect::<Vec<&str>>();
 
                 Ok(SdpProp::Media {
                     r#type: MediaType::from_str(tokens[0])?,
                     ports: tokens[1]
-                        .split("/")
+                        .split('/')
                         .map(|port| port.parse())
                         .collect::<Result<Vec<_>, _>>()?,
                     protocol: MediaProtocol::from_str(tokens[2])?,
@@ -667,7 +667,7 @@ impl FromStr for SDP {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // Split string
         let lines = s
-            .split("\n")
+            .split('\n')
             .map(|line| line.to_string())
             .collect::<Vec<String>>();
 
@@ -676,7 +676,7 @@ impl FromStr for SDP {
         let m_indices = lines
             .iter()
             .enumerate()
-            .filter(|(_, line)| line.chars().nth(0) == Some('m'))
+            .filter(|(_, line)| line.starts_with('m'))
             .map(|(idx, _)| idx)
             .collect::<Vec<_>>();
 
@@ -722,9 +722,9 @@ impl ToString for SDP {
 }
 
 fn content_from_line(line: &str) -> Result<(char, String), ParseError> {
-    let split = line.split("=").collect::<Vec<&str>>();
+    let split = line.split('=').collect::<Vec<&str>>();
     if split.len() < 2 {
         return Err(ParseError::UnknownToken(line.to_string()));
     }
-    Ok((split[0].chars().nth(0).unwrap(), split[1..].join("=")))
+    Ok((split[0].chars().next().unwrap(), split[1..].join("=")))
 }

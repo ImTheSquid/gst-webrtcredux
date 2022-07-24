@@ -38,19 +38,19 @@ impl WebRtcRedux {
         &self,
         options: Option<RTCOfferOptions>,
     ) -> Result<SDP, ErrorMessage> {
-        imp::WebRtcRedux::from_instance(&self)
+        imp::WebRtcRedux::from_instance(self)
             .create_offer(options)
             .await
     }
 
     pub async fn set_local_description(&self, sdp: &SDP) -> Result<(), ErrorMessage> {
-        imp::WebRtcRedux::from_instance(&self)
+        imp::WebRtcRedux::from_instance(self)
             .set_local_description(sdp)
             .await
     }
 
     pub async fn set_remote_description(&self, sdp: &SDP) -> Result<(), ErrorMessage> {
-        imp::WebRtcRedux::from_instance(&self)
+        imp::WebRtcRedux::from_instance(self)
             .set_remote_description(sdp)
             .await
     }
@@ -59,7 +59,7 @@ impl WebRtcRedux {
     where
         F: FnMut() + Send + Sync + 'static,
     {
-        imp::WebRtcRedux::from_instance(&self)
+        imp::WebRtcRedux::from_instance(self)
             .on_negotiation_needed(f)
             .await
     }
@@ -68,7 +68,7 @@ impl WebRtcRedux {
     where
         F: FnMut(Option<RTCIceCandidate>) + Send + Sync + 'static,
     {
-        imp::WebRtcRedux::from_instance(&self)
+        imp::WebRtcRedux::from_instance(self)
             .on_ice_candidate(f)
             .await
     }
@@ -77,7 +77,7 @@ impl WebRtcRedux {
     where
         F: FnMut(RTCIceGathererState) + Send + Sync + 'static,
     {
-        imp::WebRtcRedux::from_instance(&self)
+        imp::WebRtcRedux::from_instance(self)
             .on_ice_gathering_state_change(f)
             .await
     }
@@ -86,7 +86,7 @@ impl WebRtcRedux {
         &self,
         candidate: RTCIceCandidateInit,
     ) -> Result<(), ErrorMessage> {
-        imp::WebRtcRedux::from_instance(&self)
+        imp::WebRtcRedux::from_instance(self)
             .add_ice_candidate(candidate)
             .await
     }
