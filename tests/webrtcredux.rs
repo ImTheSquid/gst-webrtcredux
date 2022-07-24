@@ -1,12 +1,15 @@
+use std::fmt::{Display, format, Formatter};
 use std::str::FromStr;
 
-use gst::Element;
+use gst::{debug_bin_to_dot_data, DebugGraphDetails, Element};
 use gst::glib::BoolError;
 use gst::prelude::*;
 use indoc::indoc;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use enum_dispatch::enum_dispatch;
+use std::string::ToString;
+use strum_macros::Display;
 
 use webrtcredux::webrtcredux::{RTCIceServer, sdp::{AddressType, MediaProp, MediaProtocol, MediaType, NetworkType, SDP, SdpProp}, WebRtcRedux};
 
@@ -27,7 +30,7 @@ pub trait GstEncoder {
     fn to_gst_encoder(&self) -> Result<Element, BoolError>;
 }
 
-#[derive(Debug, EnumIter)]
+#[derive(Debug, EnumIter, Display)]
 enum AudioEncoder {
     Opus,
     Mulaw,
@@ -54,7 +57,7 @@ impl GstEncoder for AudioEncoder {
     }
 }
 
-#[derive(Debug, EnumIter)]
+#[derive(Debug, EnumIter, Display)]
 enum VideoEncoder {
     H264,
     VP8,
@@ -82,6 +85,15 @@ impl GstEncoder for VideoEncoder {
 enum Encoder {
     Audio(AudioEncoder),
     Video(VideoEncoder),
+}
+
+impl Display for Encoder {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Encoder::Audio(encoder) => write!(f, "audio_{}", encoder.to_string()),
+            Encoder::Video(encoder) => write!(f, "video_{}", encoder.to_string()),
+        }
+    }
 }
 
 #[test]
@@ -143,7 +155,7 @@ fn pipeline_creation_test(encoders: Vec<Encoder>) {
 
     let mut audio_idx: usize = 0;
     let mut video_idx: usize = 0;
-    for encoder_to_use in encoders {
+    for encoder_to_use in &encoders {
         let src = match encoder_to_use {
             Encoder::Audio(_) => {
                 gst::ElementFactory::make("audiotestsrc", None).unwrap()
@@ -173,6 +185,10 @@ fn pipeline_creation_test(encoders: Vec<Encoder>) {
     }
 
     assert_eq!(pipeline.set_state(gst::State::Playing).unwrap(), gst::StateChangeSuccess::Success);
+
+    // Debug diagram
+    let out = debug_bin_to_dot_data(&pipeline, DebugGraphDetails::ALL);
+    std::fs::write(format!("./target/debug/{}.dot", encoders.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("-")), out.as_str()).unwrap();
 }
 
 #[test]
