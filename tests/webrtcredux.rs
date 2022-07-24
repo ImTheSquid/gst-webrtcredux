@@ -6,6 +6,7 @@ use gst::prelude::*;
 use indoc::indoc;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
+use enum_dispatch::enum_dispatch;
 
 use webrtcredux::webrtcredux::{RTCIceServer, sdp::{AddressType, MediaProp, MediaProtocol, MediaType, NetworkType, SDP, SdpProp}, WebRtcRedux};
 
@@ -21,6 +22,7 @@ fn init() {
     })
 }
 
+#[enum_dispatch(Encoder)]
 pub trait GstEncoder {
     fn to_gst_encoder(&self) -> Result<Element, BoolError>;
 }
@@ -76,19 +78,10 @@ impl GstEncoder for VideoEncoder {
 }
 
 #[derive(Debug)]
+#[enum_dispatch]
 enum Encoder {
     Audio(AudioEncoder),
     Video(VideoEncoder),
-}
-
-//TODO: FInd the correct way to do this
-impl GstEncoder for Encoder {
-    fn to_gst_encoder(&self) -> Result<Element, BoolError> {
-        match self {
-            Encoder::Audio(e) => { e.to_gst_encoder() }
-            Encoder::Video(e) => { e.to_gst_encoder() }
-        }
-    }
 }
 
 #[test]

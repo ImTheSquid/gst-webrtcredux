@@ -46,3 +46,4 @@ gst-plugin-version-helper = {  git = "https://gitlab.freedesktop.org/gstreamer/g
 
 [dev-dependencies]
 indoc = "1.0.6"
+enum_dispatch = "0.3.8"
