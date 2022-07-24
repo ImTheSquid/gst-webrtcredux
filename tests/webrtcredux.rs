@@ -23,7 +23,6 @@ fn init() {
 
 pub trait GstEncoder {
     fn to_gst_encoder(&self) -> Result<Element, BoolError>;
-    fn to_gst_encoder_pay(&self) -> Result<Element, BoolError>;
 }
 
 #[derive(Debug, EnumIter)]
@@ -51,23 +50,6 @@ impl GstEncoder for AudioEncoder {
             }
         }
     }
-
-    fn to_gst_encoder_pay(&self) -> Result<Element, BoolError> {
-        match self {
-            AudioEncoder::Opus => {
-                gst::ElementFactory::make("rtpopuspay", None)
-            }
-            AudioEncoder::Mulaw => {
-                gst::ElementFactory::make("rtppcmupay", None)
-            }
-            AudioEncoder::Alaw => {
-                gst::ElementFactory::make("rtppcmapay", None)
-            }
-            AudioEncoder::G722 => {
-                gst::ElementFactory::make("rtpg722pay", None)
-            }
-        }
-    }
 }
 
 #[derive(Debug, EnumIter)]
@@ -91,19 +73,6 @@ impl GstEncoder for VideoEncoder {
             }
         }
     }
-    fn to_gst_encoder_pay(&self) -> Result<Element, BoolError> {
-        match self {
-            VideoEncoder::H264 => {
-                gst::ElementFactory::make("rtph264pay", None)
-            }
-            VideoEncoder::VP8 => {
-                gst::ElementFactory::make("rtph264pay", None)
-            }
-            VideoEncoder::VP9 => {
-                gst::ElementFactory::make("rtpvp9pay", None)
-            }
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -118,12 +87,6 @@ impl GstEncoder for Encoder {
         match self {
             Encoder::Audio(e) => { e.to_gst_encoder() }
             Encoder::Video(e) => { e.to_gst_encoder() }
-        }
-    }
-    fn to_gst_encoder_pay(&self) -> Result<Element, BoolError> {
-        match self {
-            Encoder::Audio(e) => { e.to_gst_encoder_pay() }
-            Encoder::Video(e) => { e.to_gst_encoder_pay() }
         }
     }
 }
@@ -196,10 +159,9 @@ fn pipeline_creation_test(encoders: Vec<Encoder>) {
         };
 
         let encoder = encoder_to_use.to_gst_encoder().unwrap();
-        let encoder_pay = encoder_to_use.to_gst_encoder_pay().unwrap();
 
-        pipeline.add_many(&[&src, &encoder, &encoder_pay]).expect("Failed to add elements to the pipeline");
-        Element::link_many(&[&src, &encoder, &encoder_pay, webrtcredux.as_ref()]).expect("Failed to link elements");
+        pipeline.add_many(&[&src, &encoder]).expect("Failed to add elements to the pipeline");
+        Element::link_many(&[&src, &encoder, webrtcredux.as_ref()]).expect("Failed to link elements");
     }
 
     assert_eq!(pipeline.set_state(gst::State::Playing).unwrap(), gst::StateChangeSuccess::Success);

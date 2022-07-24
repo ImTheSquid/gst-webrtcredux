@@ -15,6 +15,8 @@ use webrtc::api::media_engine::MediaEngine;
 pub use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::RTCPeerConnection;
+use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
+use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 
 static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
     gst::DebugCategory::new(
