@@ -19,6 +19,8 @@ use tokio::runtime;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::{APIBuilder, API};
+use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
+use webrtc::ice_transport::ice_gatherer_state::RTCIceGathererState;
 pub use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 pub use webrtc::peer_connection::offer_answer_options::RTCOfferOptions;
@@ -375,6 +377,48 @@ impl WebRtcRedux {
                 [&format!("Failed to set local description: {:?}", e)]
             ));
         }
+
+        Ok(())
+    }
+
+    pub async fn on_negotiation_needed<F>(&self, mut f: F) -> Result<(), ErrorMessage>
+        where F: FnMut() + Send + Sync + 'static
+    {
+        let webrtc_state = self.webrtc_state.lock().unwrap();
+        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state.as_ref().unwrap())?;
+
+        peer_connection.on_negotiation_needed(Box::new(move || {
+            f();
+            Box::pin(async {})
+        })).await;
+
+        Ok(())
+    }
+
+    pub async fn on_ice_candidate<F>(&self, mut f: F) -> Result<(), ErrorMessage>
+        where F: FnMut(Option<RTCIceCandidate>) + Send + Sync + 'static
+    {
+        let webrtc_state = self.webrtc_state.lock().unwrap();
+        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state.as_ref().unwrap())?;
+
+        peer_connection.on_ice_candidate(Box::new(move |candidate| {
+            f(candidate);
+            Box::pin(async {})
+        })).await;
+
+        Ok(())
+    }
+
+    pub async fn on_ice_gathering_state_change<F>(&self, mut f: F) -> Result<(), ErrorMessage>
+        where F: FnMut(RTCIceGathererState) + Send + Sync + 'static
+    {
+        let webrtc_state = self.webrtc_state.lock().unwrap();
+        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state.as_ref().unwrap())?;
+
+        peer_connection.on_ice_gathering_state_change(Box::new(move |state| {
+            f(state);
+            Box::pin(async {})
+        })).await;
 
         Ok(())
     }

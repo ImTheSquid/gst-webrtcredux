@@ -6,6 +6,8 @@ use gst::ErrorMessage;
 mod imp;
 
 pub use imp::RTCIceServer;
+use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
+use webrtc::ice_transport::ice_gatherer_state::RTCIceGathererState;
 pub use webrtc::peer_connection::offer_answer_options::RTCOfferOptions;
 
 use self::sdp::SDP;
@@ -50,6 +52,24 @@ impl WebRtcRedux {
         imp::WebRtcRedux::from_instance(&self)
             .set_remote_description(sdp)
             .await
+    }
+
+    pub async fn on_negotiation_needed<F>(&self, f: F) -> Result<(), ErrorMessage>
+        where F: FnMut() + Send + Sync + 'static
+    {
+        imp::WebRtcRedux::from_instance(&self).on_negotiation_needed(f).await
+    }
+
+    pub async fn on_ice_candidate<F>(&self, f: F) -> Result<(), ErrorMessage>
+        where F: FnMut(Option<RTCIceCandidate>) + Send + Sync + 'static
+    {
+        imp::WebRtcRedux::from_instance(&self).on_ice_candidate(f).await
+    }
+
+    pub async fn on_ice_gathering_state_change<F>(&self, f: F) -> Result<(), ErrorMessage>
+        where F: FnMut(RTCIceGathererState) + Send + Sync + 'static
+    {
+        imp::WebRtcRedux::from_instance(&self).on_ice_gathering_state_change(f).await
     }
 }
 
