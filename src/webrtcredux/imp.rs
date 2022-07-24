@@ -391,8 +391,9 @@ impl BaseSinkImpl for WebRtcRedux {
     }
 
     fn stop(&self, _sink: &Self::Type) -> Result<(), ErrorMessage> {
-        //Drop state
+        //Drop states
         self.state.lock().unwrap().take();
+        self.webrtc_state.lock().unwrap().take();
         info!(CAT, "Stopped");
         Ok(())
     }
