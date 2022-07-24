@@ -3,7 +3,6 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use futures::future;
-use futures::prelude::*;
 use gst::{debug, error, ErrorMessage, glib, info, prelude::PadExtManual, trace, traits::{ElementExt, GstObjectExt}};
 use gst_base::subclass::prelude::*;
 use interceptor::registry::Registry;
@@ -15,6 +14,7 @@ use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
 pub use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::peer_connection::configuration::RTCConfiguration;
+use webrtc::peer_connection::RTCPeerConnection;
 
 static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
     gst::DebugCategory::new(
@@ -58,13 +58,25 @@ enum MediaState {
 
 struct WebRtcState {
     api: API,
-    config: Option<RTCConfiguration>,
+    peer_connection: Option<RTCPeerConnection>,
 }
 
+#[derive(Default)]
 struct State {
     video_state: Option<MediaState>,
-    audio_state: Option<MediaState>,
-    webrtc_state: Mutex<Option<WebRtcState>>,
+    audio_state: Option<MediaState>
+}
+
+struct WebRtcSettings {
+    config: Option<RTCConfiguration>
+}
+
+impl Default for WebRtcSettings {
+    fn default() -> Self {
+        WebRtcSettings {
+            config: Some(RTCConfiguration::default())
+        }
+    }
 }
 
 struct GenericSettings {
@@ -82,18 +94,17 @@ impl Default for GenericSettings {
 #[derive(Default)]
 pub struct WebRtcRedux {
     state: Arc<Mutex<Option<State>>>,
+    webrtc_state: Arc<Mutex<Option<WebRtcState>>>,
     settings: Arc<Mutex<GenericSettings>>,
-    canceller: Mutex<Option<future::AbortHandle>>,
+    webrtc_settings: Arc<Mutex<WebRtcSettings>>,
+    canceller: Mutex<Option<future::AbortHandle>>
 }
 
 impl WebRtcRedux {
     pub fn add_ice_servers(&self, mut ice_server: Vec<RTCIceServer>) {
-        let mut state_lock = self.state.lock().unwrap();
-        let state = state_lock.as_mut().unwrap();
-        let mut webrtc_state_lock = state.webrtc_state.lock().unwrap();
-        let mut webrtc_state = webrtc_state_lock.as_mut().unwrap();
+        let mut webrtc_settings = self.webrtc_settings.lock().unwrap();
 
-        match webrtc_state.config {
+        match webrtc_settings.config {
             Some(ref mut config) => {
                 config.ice_servers.append(&mut ice_server);
             }
@@ -103,9 +114,9 @@ impl WebRtcRedux {
         }
     }
 
-    fn wait<F, T>(&self, future: F) -> Result<T, Option<gst::ErrorMessage>>
+    fn wait<F, T>(&self, future: F) -> Result<T, Option<ErrorMessage>>
         where
-            F: Send + Future<Output=Result<T, gst::ErrorMessage>>,
+            F: Send + Future<Output=Result<T, ErrorMessage>>,
             T: Send + 'static,
     {
         let timeout = self.settings.lock().unwrap().timeout;
@@ -167,12 +178,19 @@ impl ObjectSubclass for WebRtcRedux {
             .with_interceptor_registry(registry)
             .build();
 
-        let webrtc_state = Mutex::new(Some(WebRtcState {
+        let webrtc_state = Arc::new(Mutex::new(Some(WebRtcState {
             api,
-            config: Some(RTCConfiguration::default()),
-        }));
+            peer_connection: None,
+        })));
 
-        Self { state: Arc::new(Mutex::new(Some(State { video_state: None, audio_state: None, webrtc_state }))), ..Default::default() }
+        let state = Arc::new(Mutex::new(Some(State::default())));
+
+        let settings = Arc::new(Mutex::new(Default::default()));
+
+        let webrtc_settings = Arc::new(Mutex::new(Default::default()));
+
+
+        Self { state, webrtc_state, settings, webrtc_settings, canceller: Mutex::new(None) }
     }
 }
 
@@ -337,15 +355,15 @@ impl ElementImpl for WebRtcRedux {
 impl GstObjectImpl for WebRtcRedux {}
 
 impl BaseSinkImpl for WebRtcRedux {
-    fn start(&self, _sink: &Self::Type) -> Result<(), gst::ErrorMessage> {
-        let mut state_lock = self.state.lock().unwrap();
-        let state = state_lock.as_mut().unwrap();
-        let mut webrtc_state_lock = state.webrtc_state.lock().unwrap();
-        let mut webrtc_state = webrtc_state_lock.as_mut().unwrap();
+    fn start(&self, _sink: &Self::Type) -> Result<(), ErrorMessage> {
 
-        let peer_connection = match webrtc_state.config.take() {
+        let peer_connection = match self.webrtc_settings.lock().unwrap().config.take() {
             Some(config) => {
-                let future = async {
+                //Acquiring lock before the future instead of cloning because we need to return a value which is dropped with it.
+                let mut webrtc_state_lock = self.webrtc_state.lock().unwrap();
+                let webrtc_state = webrtc_state_lock.as_mut().unwrap();
+
+                let future = async move {
                     webrtc_state.api.new_peer_connection(config).await.map_err(|e| {
                         gst::error_msg!(
                             gst::ResourceError::Failed,
@@ -354,18 +372,25 @@ impl BaseSinkImpl for WebRtcRedux {
                     })
                 };
 
-                self.wait(future)
+                match self.wait(future) {
+                    Ok(peer_connection) => peer_connection,
+                    Err(e) => return Err(e.unwrap_or_else(|| gst::error_msg!(gst::ResourceError::Failed, ["Failed to wait for PeerConnection"])))
+                }
             }
             None => {
                 return Err(gst::error_msg!(gst::LibraryError::Settings, ["WebRTC configuration not set"]));
             }
         };
 
+
+        self.webrtc_state.lock().unwrap().as_mut().unwrap().peer_connection = Some(peer_connection);
+
+
         info!(CAT, "Started");
         Ok(())
     }
 
-    fn stop(&self, _sink: &Self::Type) -> Result<(), gst::ErrorMessage> {
+    fn stop(&self, _sink: &Self::Type) -> Result<(), ErrorMessage> {
         //Drop state
         self.state.lock().unwrap().take();
         info!(CAT, "Stopped");
