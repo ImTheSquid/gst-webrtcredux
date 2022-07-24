@@ -18,6 +18,8 @@ gst-audio = { package = "gstreamer-audio", git = "https://gitlab.freedesktop.org
 once_cell = "1.0"
 strum = "0.24"
 strum_macros = "0.24"
+futures = "0.3.21"
+tokio = { version = "1.20.0", default-features = false, features = ["time", "rt-multi-thread"] }
 #webrtc-rs stuff TODO: Remove unnecessary dependencies
 webrtc = "0.4.0"
 webrtc-media = "0.4.5"

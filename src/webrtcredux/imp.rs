@@ -1,24 +1,20 @@
-use std::collections::HashSet;
-use std::fmt;
+use std::future::Future;
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
-use gst::{debug, error, glib, info, prelude::PadExtManual, trace, traits::{ElementExt, GstObjectExt}};
-
+use futures::future;
+use futures::prelude::*;
+use gst::{debug, error, ErrorMessage, glib, info, prelude::PadExtManual, trace, traits::{ElementExt, GstObjectExt}};
 use gst_base::subclass::prelude::*;
 use interceptor::registry::Registry;
-
 use once_cell::sync::Lazy;
+use strum_macros::EnumString;
+use tokio::runtime;
 use webrtc::api::{API, APIBuilder};
 use webrtc::api::interceptor_registry::register_default_interceptors;
-use webrtc::api::media_engine::{MediaEngine, MIME_TYPE_G722, MIME_TYPE_H264, MIME_TYPE_OPUS, MIME_TYPE_PCMA, MIME_TYPE_PCMU, MIME_TYPE_VP8, MIME_TYPE_VP9};
+use webrtc::api::media_engine::MediaEngine;
 pub use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::peer_connection::configuration::RTCConfiguration;
-
-use std::str::FromStr;
-use strum_macros::EnumString;
-
-use crate::glib::{ParamSpec, StaticType, ToValue, Value};
-use crate::glib::subclass::Signal;
 
 static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
     gst::DebugCategory::new(
@@ -27,6 +23,15 @@ static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
         Some("WebRTC Video and Audio Transmitter"),
     )
 });
+
+static RUNTIME: Lazy<runtime::Runtime> = Lazy::new(|| {
+    runtime::Builder::new_multi_thread()
+        .enable_all()
+        .worker_threads(1)
+        .build()
+        .unwrap()
+});
+
 
 #[derive(Debug, PartialEq, EnumString)]
 enum MediaType {
@@ -53,7 +58,7 @@ enum MediaState {
 
 struct WebRtcState {
     api: API,
-    config: RTCConfiguration,
+    config: Option<RTCConfiguration>,
 }
 
 struct State {
@@ -62,9 +67,23 @@ struct State {
     webrtc_state: Mutex<Option<WebRtcState>>,
 }
 
+struct GenericSettings {
+    timeout: u16,
+}
+
+impl Default for GenericSettings {
+    fn default() -> Self {
+        Self {
+            timeout: 15,
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct WebRtcRedux {
     state: Arc<Mutex<Option<State>>>,
+    settings: Arc<Mutex<GenericSettings>>,
+    canceller: Mutex<Option<future::AbortHandle>>,
 }
 
 impl WebRtcRedux {
@@ -74,7 +93,62 @@ impl WebRtcRedux {
         let mut webrtc_state_lock = state.webrtc_state.lock().unwrap();
         let mut webrtc_state = webrtc_state_lock.as_mut().unwrap();
 
-        webrtc_state.config.ice_servers.append(&mut ice_server);
+        match webrtc_state.config {
+            Some(ref mut config) => {
+                config.ice_servers.append(&mut ice_server);
+            }
+            None => {
+                error!(CAT, "Trying to add ice servers after starting");
+            }
+        }
+    }
+
+    fn wait<F, T>(&self, future: F) -> Result<T, Option<gst::ErrorMessage>>
+        where
+            F: Send + Future<Output=Result<T, gst::ErrorMessage>>,
+            T: Send + 'static,
+    {
+        let timeout = self.settings.lock().unwrap().timeout;
+
+        let mut canceller = self.canceller.lock().unwrap();
+        let (abort_handle, abort_registration) = future::AbortHandle::new_pair();
+        canceller.replace(abort_handle);
+        drop(canceller);
+
+        // Wrap in a timeout
+        let future = async {
+            if timeout == 0 {
+                future.await
+            } else {
+                let res = tokio::time::timeout(std::time::Duration::from_secs(timeout.into()), future).await;
+
+                match res {
+                    Ok(res) => res,
+                    Err(_) => Err(gst::error_msg!(
+                        gst::ResourceError::Read,
+                        ["Request timeout"]
+                    )),
+                }
+            }
+        };
+
+        // And make abortable
+        let future = async {
+            match future::Abortable::new(future, abort_registration).await {
+                Ok(res) => res.map_err(Some),
+                Err(_) => Err(None),
+            }
+        };
+
+        let res = {
+            let _enter = RUNTIME.enter();
+            futures::executor::block_on(future)
+        };
+
+        /* Clear out the canceller */
+        let _ = self.canceller.lock().unwrap().take();
+
+        res
     }
 }
 
@@ -95,10 +169,10 @@ impl ObjectSubclass for WebRtcRedux {
 
         let webrtc_state = Mutex::new(Some(WebRtcState {
             api,
-            config: Default::default()
+            config: Some(RTCConfiguration::default()),
         }));
 
-        Self { state: Arc::new(Mutex::new(Some(State { video_state: None, audio_state: None, webrtc_state }))) }
+        Self { state: Arc::new(Mutex::new(Some(State { video_state: None, audio_state: None, webrtc_state }))), ..Default::default() }
     }
 }
 
@@ -263,15 +337,46 @@ impl ElementImpl for WebRtcRedux {
 impl GstObjectImpl for WebRtcRedux {}
 
 impl BaseSinkImpl for WebRtcRedux {
-    fn start(&self, _element: &Self::Type) -> Result<(), gst::ErrorMessage> {
+    fn start(&self, _sink: &Self::Type) -> Result<(), gst::ErrorMessage> {
+        let mut state_lock = self.state.lock().unwrap();
+        let state = state_lock.as_mut().unwrap();
+        let mut webrtc_state_lock = state.webrtc_state.lock().unwrap();
+        let mut webrtc_state = webrtc_state_lock.as_mut().unwrap();
+
+        let peer_connection = match webrtc_state.config.take() {
+            Some(config) => {
+                let future = async {
+                    webrtc_state.api.new_peer_connection(config).await.map_err(|e| {
+                        gst::error_msg!(
+                            gst::ResourceError::Failed,
+                            ["Failed to create PeerConnection: {:?}", e]
+                        )
+                    })
+                };
+
+                self.wait(future)
+            }
+            None => {
+                return Err(gst::error_msg!(gst::LibraryError::Settings, ["WebRTC configuration not set"]));
+            }
+        };
+
         info!(CAT, "Started");
         Ok(())
     }
 
-    fn stop(&self, _element: &Self::Type) -> Result<(), gst::ErrorMessage> {
+    fn stop(&self, _sink: &Self::Type) -> Result<(), gst::ErrorMessage> {
         //Drop state
         self.state.lock().unwrap().take();
         info!(CAT, "Stopped");
+        Ok(())
+    }
+
+    fn unlock(&self, _sink: &Self::Type) -> Result<(), ErrorMessage> {
+        let canceller = self.canceller.lock().unwrap();
+        if let Some(ref canceller) = *canceller {
+            canceller.abort();
+        }
         Ok(())
     }
 }
