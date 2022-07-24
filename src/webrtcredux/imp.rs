@@ -4,7 +4,6 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use futures::future;
-use gst::prelude::ObjectExt;
 use gst::{debug, error, ErrorMessage, glib, info, prelude::PadExtManual, trace, traits::{ElementExt, GstObjectExt}};
 use gst_base::subclass::prelude::*;
 use interceptor::registry::Registry;
