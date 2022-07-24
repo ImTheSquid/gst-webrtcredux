@@ -7,6 +7,7 @@ mod imp;
 
 pub use imp::RTCIceServer;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
+use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::ice_transport::ice_gatherer_state::RTCIceGathererState;
 pub use webrtc::peer_connection::offer_answer_options::RTCOfferOptions;
 
@@ -55,21 +56,39 @@ impl WebRtcRedux {
     }
 
     pub async fn on_negotiation_needed<F>(&self, f: F) -> Result<(), ErrorMessage>
-        where F: FnMut() + Send + Sync + 'static
+    where
+        F: FnMut() + Send + Sync + 'static,
     {
-        imp::WebRtcRedux::from_instance(&self).on_negotiation_needed(f).await
+        imp::WebRtcRedux::from_instance(&self)
+            .on_negotiation_needed(f)
+            .await
     }
 
     pub async fn on_ice_candidate<F>(&self, f: F) -> Result<(), ErrorMessage>
-        where F: FnMut(Option<RTCIceCandidate>) + Send + Sync + 'static
+    where
+        F: FnMut(Option<RTCIceCandidate>) + Send + Sync + 'static,
     {
-        imp::WebRtcRedux::from_instance(&self).on_ice_candidate(f).await
+        imp::WebRtcRedux::from_instance(&self)
+            .on_ice_candidate(f)
+            .await
     }
 
     pub async fn on_ice_gathering_state_change<F>(&self, f: F) -> Result<(), ErrorMessage>
-        where F: FnMut(RTCIceGathererState) + Send + Sync + 'static
+    where
+        F: FnMut(RTCIceGathererState) + Send + Sync + 'static,
     {
-        imp::WebRtcRedux::from_instance(&self).on_ice_gathering_state_change(f).await
+        imp::WebRtcRedux::from_instance(&self)
+            .on_ice_gathering_state_change(f)
+            .await
+    }
+
+    pub async fn add_ice_candidate(
+        &self,
+        candidate: RTCIceCandidateInit,
+    ) -> Result<(), ErrorMessage> {
+        imp::WebRtcRedux::from_instance(&self)
+            .add_ice_candidate(candidate)
+            .await
     }
 }
 
