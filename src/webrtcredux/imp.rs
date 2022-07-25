@@ -2,7 +2,9 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
+use futures::executor::block_on;
 use futures::future;
 use gst::fixme;
 use gst::{
@@ -18,7 +20,7 @@ use once_cell::sync::Lazy;
 use strum_macros::EnumString;
 use tokio::runtime;
 use webrtc::api::interceptor_registry::register_default_interceptors;
-use webrtc::api::media_engine::MediaEngine;
+use webrtc::api::media_engine::{MediaEngine, MIME_TYPE_H264, MIME_TYPE_OPUS, MIME_TYPE_G722, MIME_TYPE_VP8, MIME_TYPE_VP9, MIME_TYPE_PCMU, MIME_TYPE_PCMA};
 use webrtc::api::{APIBuilder, API};
 use webrtc::ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit};
 use webrtc::ice_transport::ice_gatherer_state::RTCIceGathererState;
@@ -28,6 +30,9 @@ pub use webrtc::peer_connection::offer_answer_options::RTCOfferOptions;
 use webrtc::peer_connection::sdp::sdp_type::RTCSdpType;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection;
+use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
+use webrtc::track::track_local::TrackLocal;
+use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
 
 use super::sdp::SDP;
 
@@ -81,44 +86,45 @@ enum MediaType {
     Alaw,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+impl MediaType {
+    fn webrtc_mime(self) -> &'static str {
+        match self {
+            MediaType::H264 => MIME_TYPE_H264,
+            MediaType::VP8 => MIME_TYPE_VP8,
+            MediaType::VP9 => MIME_TYPE_VP9,
+            MediaType::Opus => MIME_TYPE_OPUS,
+            MediaType::G722 => MIME_TYPE_G722,
+            MediaType::Mulaw => MIME_TYPE_PCMU,
+            MediaType::Alaw => MIME_TYPE_PCMA,
+        }
+    }
+}
+
+#[derive(Clone)]
 enum MediaState {
     NotConfigured,
-    TypeConfigured(MediaType),
     IdConfigured(String),
-    Configured { media: MediaType, id: String },
+    Configured { track: Arc<TrackLocalStaticSample>, duration: Duration },
 }
 
 impl MediaState {
     fn add_id(&self, new_id: &str) -> Self {
         match self {
             MediaState::NotConfigured => MediaState::IdConfigured(new_id.to_string()),
-            MediaState::TypeConfigured(media) => MediaState::Configured {
-                media: *media,
-                id: new_id.to_string(),
-            },
             MediaState::IdConfigured(_) => MediaState::IdConfigured(new_id.to_string()),
-            MediaState::Configured { media, id: _ } => MediaState::Configured {
-                media: *media,
-                id: new_id.to_string(),
-            },
+            MediaState::Configured { .. } => self.to_owned(),
         }
     }
 
-    fn add_media(&self, new_media: MediaType) -> Self {
+    /*fn add_track(&self, track: Arc<TrackLocalStaticSample>, duration: Duration) -> Self {
         match self {
-            MediaState::NotConfigured => MediaState::TypeConfigured(new_media),
-            MediaState::TypeConfigured(_) => MediaState::TypeConfigured(new_media),
-            MediaState::IdConfigured(id) => MediaState::Configured {
-                media: new_media,
-                id: id.to_owned(),
-            },
-            MediaState::Configured { media: _, id } => MediaState::Configured {
-                media: new_media,
-                id: id.to_owned(),
-            },
+            MediaState::NotConfigured => unreachable!("Shouldn't be able to set track without ID"),
+            _ => MediaState::Configured {
+                track,
+                duration,
+            }
         }
-    }
+    }*/
 }
 
 struct WebRtcState {
@@ -578,17 +584,22 @@ impl ElementImpl for WebRtcRedux {
                 unsafe {
                     let id = state.next_video_pad_id;
                     let state = self.state.clone();
+                    let webrtc_state = self.webrtc_state.clone();
                     pad.set_event_function(move |_pad, _parent, event| {
                         let structure = event.structure().unwrap();
                         if structure.name() == "GstEventCaps" {
-                            let mime = structure
+                            let structure = structure
                                 .get::<gst::Caps>("caps")
-                                .unwrap()
-                                .structure(0)
-                                .unwrap()
-                                .name();
+                                .unwrap();
 
-                            let current = {
+                            let structure = structure.structure(0).unwrap();
+
+                            let mime = structure.name();
+
+                            let framerate = structure.get::<gst::Fraction>("framerate").unwrap().0;
+                            let duration = Duration::from_millis(((*framerate.denom() as f64 / *framerate.numer() as f64)  * 1000.0).round() as u64);
+
+                            let stream_id = match {
                                 let state = state.lock().unwrap();
                                 state
                                     .as_ref()
@@ -597,12 +608,30 @@ impl ElementImpl for WebRtcRedux {
                                     .get(&id)
                                     .unwrap()
                                     .to_owned()
+                            } {
+                                MediaState::IdConfigured(id) => id,
+                                _ => unreachable!()
                             };
+
+                            let track = Arc::new(TrackLocalStaticSample::new(
+                                RTCRtpCodecCapability { 
+                                    mime_type: MediaType::from_str(mime).expect("Failed to parse mime type").webrtc_mime().to_string(), 
+                                    ..RTCRtpCodecCapability::default()
+                                }, 
+                                "video".to_string(), 
+                                stream_id
+                            ));
+
+                            // Add track to connection
+                            let webrtc_state = webrtc_state.clone();
+                            let video = track.clone();
+                            block_on(async move {
+                                webrtc_state.lock().unwrap().as_ref().unwrap().peer_connection.as_ref().unwrap().add_track(Arc::clone(&video) as Arc<dyn TrackLocal + Send + Sync>).await
+                            }).expect("Failed to add track");
+                            
                             state.lock().unwrap().as_mut().unwrap().video_state.insert(
                                 id,
-                                current.add_media(
-                                    MediaType::from_str(mime).expect("Failed to parse mime type"),
-                                ),
+                                MediaState::Configured { track, duration },
                             );
 
                             debug!(CAT, "Video media type set to: {}", mime);
@@ -633,17 +662,22 @@ impl ElementImpl for WebRtcRedux {
                 unsafe {
                     let id = state.next_audio_pad_id;
                     let state = self.state.clone();
+                    let webrtc_state = self.webrtc_state.clone();
                     pad.set_event_function(move |_pad, _parent, event| {
                         let structure = event.structure().unwrap();
                         if structure.name() == "GstEventCaps" {
-                            let mime = structure
+                            let structure = structure
                                 .get::<gst::Caps>("caps")
-                                .unwrap()
-                                .structure(0)
-                                .unwrap()
-                                .name();
+                                .unwrap();
 
-                            let current = {
+                            let structure = structure.structure(0).unwrap();
+
+                            let mime = structure.name();
+
+                            let sample_rate: i32 = structure.get("rate").unwrap();
+                            let duration = Duration::from_millis(((1.0 / sample_rate as f64)  * 1000.0).round() as u64);
+
+                            let stream_id = match {
                                 let state = state.lock().unwrap();
                                 state
                                     .as_ref()
@@ -652,12 +686,30 @@ impl ElementImpl for WebRtcRedux {
                                     .get(&id)
                                     .unwrap()
                                     .to_owned()
+                            } {
+                                MediaState::IdConfigured(id) => id,
+                                _ => unreachable!()
                             };
+
+                            let track = Arc::new(TrackLocalStaticSample::new(
+                                RTCRtpCodecCapability { 
+                                    mime_type: MediaType::from_str(mime).expect("Failed to parse mime type").webrtc_mime().to_string(), 
+                                    ..RTCRtpCodecCapability::default()
+                                }, 
+                                "audio".to_string(), 
+                                stream_id
+                            ));
+                            
+                            // Add track to connection
+                            let webrtc_state = webrtc_state.clone();
+                            let audio = track.clone();
+                            block_on(async move {
+                                webrtc_state.lock().unwrap().as_ref().unwrap().peer_connection.as_ref().unwrap().add_track(Arc::clone(&audio) as Arc<dyn TrackLocal + Send + Sync>).await
+                            }).expect("Failed to add track");
+                            
                             state.lock().unwrap().as_mut().unwrap().audio_state.insert(
                                 id,
-                                current.add_media(
-                                    MediaType::from_str(mime).expect("Failed to parse mime type"),
-                                ),
+                                MediaState::Configured { track, duration },
                             );
 
                             debug!(CAT, "Audio media type set to: {}", mime);
@@ -726,12 +778,12 @@ impl GstObjectImpl for WebRtcRedux {}
 impl BaseSinkImpl for WebRtcRedux {
     fn start(&self, _sink: &Self::Type) -> Result<(), ErrorMessage> {
         // Make sure all pads are configured with a stream ID
-        for (key, val) in self.state.lock().unwrap().as_mut().unwrap().audio_state.iter_mut().filter(|(_, val)| **val == MediaState::NotConfigured) {
+        for (key, val) in self.state.lock().unwrap().as_mut().unwrap().audio_state.iter_mut().filter(|(_, val)| match **val { MediaState::NotConfigured => true, _ => false }) {
             fixme!(CAT, "Using pad name as stream_id for audio pad {}, consider setting before pipeline starts", key);
             *val = val.add_id(&format!("audio_{}", key));
         }
 
-        for (key, val) in self.state.lock().unwrap().as_mut().unwrap().video_state.iter_mut().filter(|(_, val)| **val == MediaState::NotConfigured) {
+        for (key, val) in self.state.lock().unwrap().as_mut().unwrap().video_state.iter_mut().filter(|(_, val)| match **val { MediaState::NotConfigured => true, _ => false }) {
             fixme!(CAT, "Using pad name as stream_id for video pad {}, consider setting before pipeline starts", key);
             *val = val.add_id(&format!("video_{}", key));
         }
