@@ -8,11 +8,14 @@ use std::time::Duration;
 use bytes::Bytes;
 use futures::executor::block_on;
 use futures::future;
-use gst::fixme;
 use gst::{
-    debug, error, glib, info,
+    gst_debug as debug,
+    gst_error as error,
+    gst_info as info,
+    gst_trace as trace,
+    gst_fixme as fixme,
+    glib,
     prelude::PadExtManual,
-    trace,
     traits::{ElementExt, GstObjectExt},
     ErrorMessage,
 };
@@ -528,12 +531,12 @@ impl ElementImpl for WebRtcRedux {
     fn pad_templates() -> &'static [gst::PadTemplate] {
         static PAD_TEMPLATES: Lazy<Vec<gst::PadTemplate>> = Lazy::new(|| {
             //MIME_TYPE_H264
-            let mut video_caps = gst::Caps::new_empty_simple("video/x-h264");
+            let mut video_caps = gst::Caps::new_simple("video/x-h264", &[]);
             let video_caps = video_caps.get_mut().unwrap();
             //MIME_TYPE_VP8
-            video_caps.append(gst::Caps::new_empty_simple("video/x-vp8"));
+            video_caps.append(gst::Caps::new_simple("video/x-vp8", &[]));
             //MIME_TYPE_VP9
-            video_caps.append(gst::Caps::new_empty_simple("video/x-vp9"));
+            video_caps.append(gst::Caps::new_simple("video/x-vp9", &[]));
 
             let video_sink = gst::PadTemplate::new(
                 "video_%u",
@@ -544,14 +547,14 @@ impl ElementImpl for WebRtcRedux {
             .unwrap();
 
             //MIME_TYPE_OPUS
-            let mut audio_caps = gst::Caps::new_empty_simple("audio/x-opus");
+            let mut audio_caps = gst::Caps::new_simple("audio/x-opus", &[]);
             let audio_caps = audio_caps.get_mut().unwrap();
             //MIME_TYPE_G722
-            audio_caps.append(gst::Caps::new_empty_simple("audio/G722"));
+            audio_caps.append(gst::Caps::new_simple("audio/G722", &[]));
             //MIME_TYPE_PCMU
-            audio_caps.append(gst::Caps::new_empty_simple("audio/x-mulaw"));
+            audio_caps.append(gst::Caps::new_simple("audio/x-mulaw", &[]));
             //MIME_TYPE_PCMA
-            audio_caps.append(gst::Caps::new_empty_simple("audio/x-alaw"));
+            audio_caps.append(gst::Caps::new_simple("audio/x-alaw", &[]));
 
             let audio_sink = gst::PadTemplate::new(
                 "audio_%u",
@@ -578,7 +581,7 @@ impl ElementImpl for WebRtcRedux {
         let state = state.as_mut().unwrap();
 
         // Set up audio and video pads along with callbacks for events and data
-        match templ.name_template() {
+        match templ.name_template().unwrap().as_str() {
             "video_%u" => {
                 let pad = gst::Pad::from_template(
                     templ,
