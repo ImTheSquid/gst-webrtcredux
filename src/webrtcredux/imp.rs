@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -627,9 +628,17 @@ impl ElementImpl for WebRtcRedux {
                             // Add track to connection
                             let webrtc_state = webrtc_state.clone();
                             let video = track.clone();
-                            block_on(async move {
+                            let rtp_sender = block_on(async move {
                                 webrtc_state.lock().unwrap().as_ref().unwrap().peer_connection.as_ref().unwrap().add_track(Arc::clone(&video) as Arc<dyn TrackLocal + Send + Sync>).await
                             }).expect("Failed to add track");
+
+                            thread::spawn(move || {
+                                block_on(async move {
+                                    let mut rtcp_buf = vec![0u8; 1500];
+                                    while let Ok((_, _)) = rtp_sender.read(&mut rtcp_buf).await {}
+                                    anyhow::Result::<()>::Ok(())
+                                })
+                            });
                             
                             state.lock().unwrap().as_mut().unwrap().video_state.insert(
                                 id,
@@ -720,9 +729,17 @@ impl ElementImpl for WebRtcRedux {
                             // Add track to connection
                             let webrtc_state = webrtc_state.clone();
                             let audio = track.clone();
-                            block_on(async move {
+                            let rtp_sender = block_on(async move {
                                 webrtc_state.lock().unwrap().as_ref().unwrap().peer_connection.as_ref().unwrap().add_track(Arc::clone(&audio) as Arc<dyn TrackLocal + Send + Sync>).await
                             }).expect("Failed to add track");
+
+                            thread::spawn(move || {
+                                block_on(async move {
+                                    let mut rtcp_buf = vec![0u8; 1500];
+                                    while let Ok((_, _)) = rtp_sender.read(&mut rtcp_buf).await {}
+                                    anyhow::Result::<()>::Ok(())
+                                })
+                            });
                             
                             state.lock().unwrap().as_mut().unwrap().audio_state.insert(
                                 id,
