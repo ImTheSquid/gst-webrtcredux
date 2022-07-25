@@ -35,6 +35,7 @@ turn = "0.5.4"
 webrtc-ice = "0.7.0"
 sdp = "0.5.1"
 webrtc-util = "0.5.4"
+bytes = "1.2.0"
 
 [lib]
 name = "webrtcredux"

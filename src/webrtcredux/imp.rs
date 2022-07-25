@@ -4,6 +4,7 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use bytes::Bytes;
 use futures::executor::block_on;
 use futures::future;
 use gst::fixme;
@@ -33,6 +34,7 @@ use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::track::track_local::TrackLocal;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
+use webrtc_media::Sample;
 
 use super::sdp::SDP;
 
@@ -639,9 +641,24 @@ impl ElementImpl for WebRtcRedux {
                         true
                     });
 
-                    pad.set_chain_function(|_pad, _parent, buffer| {
+                    let chain_state = self.state.clone();
+                    pad.set_chain_function(move |_pad, _parent, buffer| {
                         let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
-                        trace!(CAT, "Video map Size: {}", map.size());
+                        trace!(CAT, "Video map size: {}", map.size());
+                        let chain_state = chain_state.lock().unwrap();
+                        let (track, duration) = match chain_state.as_ref().unwrap().video_state.get(&id).unwrap() {
+                            MediaState::Configured { track, duration} => (track, duration.to_owned()),
+                            _ => return Ok(gst::FlowSuccess::Ok)
+                        };
+
+                        block_on(async move {
+                            track.write_sample(&Sample {
+                                data: Bytes::copy_from_slice(map.as_slice()),
+                                duration,
+                                ..Sample::default()
+                            }).await
+                        }).expect("Failed to write sample");
+
                         Ok(gst::FlowSuccess::Ok)
                     });
                 }
@@ -717,9 +734,24 @@ impl ElementImpl for WebRtcRedux {
                         true
                     });
 
-                    pad.set_chain_function(|_pad, _parent, buffer| {
+                    let chain_state = self.state.clone();
+                    pad.set_chain_function(move |_pad, _parent, buffer| {
                         let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
-                        trace!(CAT, "Audio map Size: {}", map.size());
+                        trace!(CAT, "Audio map size: {}", map.size());
+                        let chain_state = chain_state.lock().unwrap();
+                        let (track, duration) = match chain_state.as_ref().unwrap().audio_state.get(&id).unwrap() {
+                            MediaState::Configured { track, duration} => (track, duration.to_owned()),
+                            _ => return Ok(gst::FlowSuccess::Ok)
+                        };
+
+                        block_on(async move {
+                            track.write_sample(&Sample {
+                                data: Bytes::copy_from_slice(map.as_slice()),
+                                duration,
+                                ..Sample::default()
+                            }).await
+                        }).expect("Failed to write sample");
+
                         Ok(gst::FlowSuccess::Ok)
                     });
                 }
