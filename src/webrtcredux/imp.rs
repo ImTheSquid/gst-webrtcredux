@@ -4,6 +4,7 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use futures::future;
+use gst::fixme;
 use gst::{
     debug, error, glib, info,
     prelude::PadExtManual,
@@ -687,6 +688,10 @@ impl ElementImpl for WebRtcRedux {
     }
 
     fn release_pad(&self, element: &Self::Type, pad: &gst::Pad) {
+        if let None = self.state.lock().unwrap().as_ref() {
+            return;
+        }
+
         let name = pad.name();
         let split = name.split('_').collect::<Vec<_>>();
         let id: usize = split[1].parse().unwrap();
@@ -721,29 +726,14 @@ impl GstObjectImpl for WebRtcRedux {}
 impl BaseSinkImpl for WebRtcRedux {
     fn start(&self, _sink: &Self::Type) -> Result<(), ErrorMessage> {
         // Make sure all pads are configured with a stream ID
-        let audio_ok = self
-            .state
-            .lock()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .audio_state
-            .values()
-            .all(|val| matches!(*val, MediaState::IdConfigured(_)));
-        let video_ok = self
-            .state
-            .lock()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .video_state
-            .values()
-            .all(|val| matches!(*val, MediaState::IdConfigured(_)));
-        if !(audio_ok && video_ok) {
-            return Err(gst::error_msg!(
-                gst::LibraryError::Settings,
-                ["Not all pads are fully-configured"]
-            ));
+        for (key, val) in self.state.lock().unwrap().as_mut().unwrap().audio_state.iter_mut().filter(|(_, val)| **val == MediaState::NotConfigured) {
+            fixme!(CAT, "Using pad name as stream_id for audio pad {}, consider setting before pipeline starts", key);
+            *val = val.add_id(&format!("audio_{}", key));
+        }
+
+        for (key, val) in self.state.lock().unwrap().as_mut().unwrap().video_state.iter_mut().filter(|(_, val)| **val == MediaState::NotConfigured) {
+            fixme!(CAT, "Using pad name as stream_id for video pad {}, consider setting before pipeline starts", key);
+            *val = val.add_id(&format!("video_{}", key));
         }
 
         let peer_connection = match self.webrtc_settings.lock().unwrap().config.take() {
