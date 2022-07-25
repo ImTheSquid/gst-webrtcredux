@@ -5,7 +5,7 @@ use gst::ErrorMessage;
 
 mod imp;
 
-pub use imp::RTCIceServer;
+pub use imp::*;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::ice_transport::ice_gatherer_state::RTCIceGathererState;
