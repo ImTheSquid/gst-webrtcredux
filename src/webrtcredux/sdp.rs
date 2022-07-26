@@ -639,11 +639,11 @@ impl FromStr for SDP {
 
 impl ToString for SDP {
     fn to_string(&self) -> String {
-        format!("{}\n", self.props
+        format!("{}\r\n", self.props
             .iter()
             .map(|prop| prop.to_string())
             .collect::<Vec<String>>()
-            .join("\n"))
+            .join("\r\n"))
     }
 }
 
