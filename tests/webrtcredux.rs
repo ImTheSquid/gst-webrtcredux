@@ -218,8 +218,8 @@ fn sdp_serialization() {
     a=recvonly
     m=audio 49170 RTP/AVP 0
     m=video 51372 RTP/AVP 99
-    a=rtpmap:99 h263-1998/90000"
-    );
+    a=rtpmap:99 h263-1998/90000
+    ");
 
     let props = vec![
         SdpProp::Version(0),
@@ -536,4 +536,15 @@ fn complex_unformatted_sdp() {
     let sdp = SDP::from_str(text);
 
     assert!(sdp.is_ok());
+}
+
+#[test]
+fn sdp_symmetry() {
+    let text = "v=0\r\no=- 9023059822302806521 801820409 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\na=fingerprint:sha-256 18:FB:AD:1F:CC:77:25:4F:6C:CD:3F:88:58:94:26:D5:B3:9B:72:CB:5A:9A:0E:A0:5D:C4:C8:E3:1D:5A:5A:6D\r\na=group:BUNDLE\r\nm=video 0 UDP/TLS/RTP/SAVPF 0\r\nm=audio 0 UDP/TLS/RTP/SAVPF 0\r\n";
+
+    let sdp = SDP::from_str(text);
+
+    assert!(sdp.is_ok());
+
+    assert_eq!(text.replace("\r\n", "\n"), sdp.unwrap().to_string());
 }
