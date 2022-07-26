@@ -346,6 +346,7 @@ impl FromStr for SdpProp {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let (key, value) = content_from_line(s)?;
         let tokens = value.split(' ').collect::<Vec<&str>>();
+        println!("Parsing line: {}", s);
 
         // TODO: Cut down on code copying from SDPProp to MediaProp
         match key {
@@ -586,6 +587,9 @@ impl FromStr for SDP {
     type Err = ParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // Convert \r\n to \n
+        let s = s.replace("\r\n", "\n");
+
         // Split string
         let lines = s
             .split('\n')
@@ -605,6 +609,7 @@ impl FromStr for SDP {
         let lines: Vec<String> =
             lines
                 .into_iter()
+                .filter(|line| !line.is_empty())
                 .enumerate()
                 .fold(Vec::new(), |mut acc, (idx, line)| {
                     // If m-line detected or array empty, start a new section
