@@ -32,7 +32,7 @@ use webrtc::ice_transport::ice_gatherer_state::RTCIceGathererState;
 pub use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 pub use webrtc::peer_connection::offer_answer_options::RTCOfferOptions;
-use webrtc::peer_connection::sdp::sdp_type::RTCSdpType;
+pub use webrtc::peer_connection::sdp::sdp_type::RTCSdpType;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
@@ -358,13 +358,13 @@ impl WebRtcRedux {
         }
     }
 
-    pub async fn set_local_description(&self, sdp: &SDP) -> Result<(), ErrorMessage> {
+    pub async fn set_local_description(&self, sdp: &SDP, sdp_type: RTCSdpType) -> Result<(), ErrorMessage> {
         let webrtc_state = self.webrtc_state.lock().unwrap();
         let peer_connection = WebRtcRedux::get_peer_connection(webrtc_state.as_ref().unwrap())?;
 
         let mut default = RTCSessionDescription::default();
         default.sdp = sdp.to_string();
-        default.sdp_type = RTCSdpType::Offer;
+        default.sdp_type = sdp_type;
 
         if let Err(e) = peer_connection.set_local_description(default).await {
             return Err(gst::error_msg!(
@@ -376,13 +376,13 @@ impl WebRtcRedux {
         Ok(())
     }
 
-    pub async fn set_remote_description(&self, sdp: &SDP) -> Result<(), ErrorMessage> {
+    pub async fn set_remote_description(&self, sdp: &SDP, sdp_type: RTCSdpType) -> Result<(), ErrorMessage> {
         let webrtc_state = self.webrtc_state.lock().unwrap();
         let peer_connection = WebRtcRedux::get_peer_connection(webrtc_state.as_ref().unwrap())?;
 
         let mut default = RTCSessionDescription::default();
         default.sdp = sdp.to_string();
-        default.sdp_type = RTCSdpType::Answer;
+        default.sdp_type = sdp_type;
 
         if let Err(e) = peer_connection.set_remote_description(default).await {
             return Err(gst::error_msg!(

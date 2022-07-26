@@ -43,15 +43,15 @@ impl WebRtcRedux {
             .await
     }
 
-    pub async fn set_local_description(&self, sdp: &SDP) -> Result<(), ErrorMessage> {
+    pub async fn set_local_description(&self, sdp: &SDP, sdp_type: RTCSdpType) -> Result<(), ErrorMessage> {
         imp::WebRtcRedux::from_instance(self)
-            .set_local_description(sdp)
+            .set_local_description(sdp, sdp_type)
             .await
     }
 
-    pub async fn set_remote_description(&self, sdp: &SDP) -> Result<(), ErrorMessage> {
+    pub async fn set_remote_description(&self, sdp: &SDP, sdp_type: RTCSdpType) -> Result<(), ErrorMessage> {
         imp::WebRtcRedux::from_instance(self)
-            .set_remote_description(sdp)
+            .set_remote_description(sdp, sdp_type)
             .await
     }
 
