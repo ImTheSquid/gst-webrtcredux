@@ -9,7 +9,6 @@ pub use imp::*;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::ice_transport::ice_gatherer_state::RTCIceGathererState;
-pub use webrtc::peer_connection::offer_answer_options::RTCOfferOptions;
 
 use self::sdp::SDP;
 pub mod sdp;
@@ -40,6 +39,15 @@ impl WebRtcRedux {
     ) -> Result<SDP, ErrorMessage> {
         imp::WebRtcRedux::from_instance(self)
             .create_offer(options)
+            .await
+    }
+
+    pub async fn create_answer(
+        &self,
+        options: Option<RTCAnswerOptions>
+    ) -> Result<SDP, ErrorMessage> {
+        imp::WebRtcRedux::from_instance(self)
+            .create_answer(options)
             .await
     }
 

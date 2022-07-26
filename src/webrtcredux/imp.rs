@@ -31,6 +31,7 @@ use webrtc::ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit}
 use webrtc::ice_transport::ice_gatherer_state::RTCIceGathererState;
 pub use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::peer_connection::configuration::RTCConfiguration;
+pub use webrtc::peer_connection::offer_answer_options::RTCAnswerOptions;
 pub use webrtc::peer_connection::offer_answer_options::RTCOfferOptions;
 pub use webrtc::peer_connection::sdp::sdp_type::RTCSdpType;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
@@ -354,6 +355,22 @@ impl WebRtcRedux {
             Err(e) => Err(gst::error_msg!(
                 gst::ResourceError::Failed,
                 [&format!("Failed to create offer: {:?}", e)]
+            )),
+        }
+    }
+
+    pub async fn create_answer(
+        &self,
+        options: Option<RTCAnswerOptions>
+    ) -> Result<SDP, ErrorMessage> {
+        let webrtc_state = self.webrtc_state.lock().unwrap();
+        let peer_connection = WebRtcRedux::get_peer_connection(webrtc_state.as_ref().unwrap())?;
+
+        match peer_connection.create_answer(options).await {
+            Ok(res) => Ok(SDP::from_str(&res.sdp).unwrap()),
+            Err(e) => Err(gst::error_msg!(
+                gst::ResourceError::Failed,
+                [&format!("Failed to create answer: {:?}", e)]
             )),
         }
     }
