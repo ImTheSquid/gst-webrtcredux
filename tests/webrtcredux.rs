@@ -12,7 +12,7 @@ use strum_macros::Display;
 use strum_macros::EnumIter;
 
 use webrtcredux::webrtcredux::{
-    sdp::{AddressType, MediaProp, MediaProtocol, MediaType, NetworkType, SdpProp, SDP},
+    sdp::{AddressType, MediaProp, MediaType, NetworkType, SdpProp, SDP},
     RTCIceServer, WebRtcRedux,
 };
 
@@ -254,14 +254,14 @@ fn sdp_serialization() {
         SdpProp::Media {
             r#type: MediaType::Audio,
             ports: vec![49170],
-            protocol: MediaProtocol::RtpAvp,
+            protocol: "RTP/AVP".to_string(),
             format: "0".to_string(),
             props: vec![],
         },
         SdpProp::Media {
             r#type: MediaType::Video,
             ports: vec![51372],
-            protocol: MediaProtocol::RtpAvp,
+            protocol: "RTP/AVP".to_string(),
             format: "99".to_string(),
             props: vec![MediaProp::Attribute {
                 key: "rtpmap".to_string(),
@@ -310,14 +310,14 @@ fn sdp_deserialization() {
         SdpProp::Media {
             r#type: MediaType::Audio,
             ports: vec![49170],
-            protocol: MediaProtocol::RtpAvp,
+            protocol: "RTP/AVP".to_string(),
             format: "0".to_string(),
             props: vec![],
         },
         SdpProp::Media {
             r#type: MediaType::Video,
             ports: vec![51372],
-            protocol: MediaProtocol::RtpAvp,
+            protocol: "RTP/AVP".to_string(),
             format: "99".to_string(),
             props: vec![MediaProp::Attribute {
                 key: "rtpmap".to_string(),

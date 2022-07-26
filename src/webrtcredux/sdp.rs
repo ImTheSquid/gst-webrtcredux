@@ -161,37 +161,6 @@ impl ToString for MediaType {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum MediaProtocol {
-    Udp,
-    RtpAvp,
-    RtpSavp,
-}
-
-impl FromStr for MediaProtocol {
-    type Err = ParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "udp" => Ok(MediaProtocol::Udp),
-            "RTP/AVP" => Ok(MediaProtocol::RtpAvp),
-            "RTP/SAVP" => Ok(MediaProtocol::RtpSavp),
-            _ => Err(ParseError::UnknownToken(s.to_string())),
-        }
-    }
-}
-
-impl ToString for MediaProtocol {
-    fn to_string(&self) -> String {
-        match self {
-            MediaProtocol::Udp => "udp",
-            MediaProtocol::RtpAvp => "RTP/AVP",
-            MediaProtocol::RtpSavp => "RTP/SAVP",
-        }
-        .to_owned()
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
 pub enum NetworkType {
     Internet,
 }
@@ -365,7 +334,7 @@ pub enum SdpProp {
     Media {
         r#type: MediaType,
         ports: Vec<u16>,
-        protocol: MediaProtocol,
+        protocol: String,
         format: String,
         props: Vec<MediaProp>,
     },
@@ -473,7 +442,7 @@ impl FromStr for SdpProp {
                         .split('/')
                         .map(|port| port.parse())
                         .collect::<Result<Vec<_>, _>>()?,
-                    protocol: MediaProtocol::from_str(tokens[2])?,
+                    protocol: tokens[2].to_string(),
                     format: tokens[3..].join(" "),
                     props: lines[1..]
                         .iter()
