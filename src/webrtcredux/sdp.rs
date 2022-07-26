@@ -98,9 +98,9 @@ impl ToString for MediaProp {
                 num_addresses,
                 suffix,
             } => {
-                // TTL is required for IPv4
-                let mut address = if *address_type == AddressType::IPv4 || ttl.is_some() {
-                    format!("{address}/{}", ttl.unwrap())
+                // TTL is required for IPv4, but also apparently the major browsers don't like to follow specs so we're gonna ignore that
+                let mut address = if let Some(ttl) = ttl {
+                    format!("{address}/{}", ttl)
                 } else {
                     address.clone()
                 };
