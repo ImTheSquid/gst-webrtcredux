@@ -3,10 +3,9 @@ use std::future::Future;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use futures::executor::block_on;
 use futures::future;
 use gst::{
     gst_debug as debug,
@@ -684,12 +683,12 @@ impl ElementImpl for WebRtcRedux {
                             // Add track to connection
                             let webrtc_state = webrtc_state.clone();
                             let video = track.clone();
-                            let rtp_sender = block_on(async move {
+                            let rtp_sender = RUNTIME.block_on(async move {
                                 webrtc_state.lock().unwrap().as_ref().unwrap().peer_connection.as_ref().unwrap().add_track(Arc::clone(&video) as Arc<dyn TrackLocal + Send + Sync>).await
                             }).expect("Failed to add track");
 
                             thread::spawn(move || {
-                                block_on(async move {
+                                RUNTIME.block_on(async move {
                                     let mut rtcp_buf = vec![0u8; 1500];
                                     while let Ok((_, _)) = rtp_sender.read(&mut rtcp_buf).await {}
                                     anyhow::Result::<()>::Ok(())
@@ -707,6 +706,7 @@ impl ElementImpl for WebRtcRedux {
                     });
 
                     let chain_state = self.state.clone();
+                    let last_sample_timestamp: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
                     pad.set_chain_function(move |_pad, _parent, buffer| {
                         let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
                         trace!(CAT, "Video map size: {}", map.size());
@@ -716,13 +716,21 @@ impl ElementImpl for WebRtcRedux {
                             _ => return Ok(gst::FlowSuccess::Ok)
                         };
 
-                        block_on(async move {
+                        let diff_duration = if let Some(last) = last_sample_timestamp.lock().unwrap().as_ref() {
+                            Instant::now() - *last
+                        } else {
+                            Duration::from_millis(0)
+                        };
+
+                        RUNTIME.block_on(async move {
                             track.write_sample(&Sample {
                                 data: Bytes::copy_from_slice(map.as_slice()),
-                                duration,
+                                duration: Duration::from_millis((duration.as_millis() * diff_duration.as_millis()).try_into().unwrap()),
                                 ..Sample::default()
                             }).await
                         }).expect("Failed to write sample");
+
+                        let _ = last_sample_timestamp.lock().unwrap().insert(Instant::now());
 
                         Ok(gst::FlowSuccess::Ok)
                     });
@@ -785,12 +793,12 @@ impl ElementImpl for WebRtcRedux {
                             // Add track to connection
                             let webrtc_state = webrtc_state.clone();
                             let audio = track.clone();
-                            let rtp_sender = block_on(async move {
+                            let rtp_sender = RUNTIME.block_on(async move {
                                 webrtc_state.lock().unwrap().as_ref().unwrap().peer_connection.as_ref().unwrap().add_track(Arc::clone(&audio) as Arc<dyn TrackLocal + Send + Sync>).await
                             }).expect("Failed to add track");
 
                             thread::spawn(move || {
-                                block_on(async move {
+                                RUNTIME.block_on(async move {
                                     let mut rtcp_buf = vec![0u8; 1500];
                                     while let Ok((_, _)) = rtp_sender.read(&mut rtcp_buf).await {}
                                     anyhow::Result::<()>::Ok(())
@@ -808,6 +816,7 @@ impl ElementImpl for WebRtcRedux {
                     });
 
                     let chain_state = self.state.clone();
+                    let last_sample_timestamp: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
                     pad.set_chain_function(move |_pad, _parent, buffer| {
                         let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
                         trace!(CAT, "Audio map size: {}", map.size());
@@ -817,13 +826,21 @@ impl ElementImpl for WebRtcRedux {
                             _ => return Ok(gst::FlowSuccess::Ok)
                         };
 
-                        block_on(async move {
+                        let diff_duration = if let Some(last) = last_sample_timestamp.lock().unwrap().as_ref() {
+                            Instant::now() - *last
+                        } else {
+                            Duration::from_millis(0)
+                        };
+
+                        RUNTIME.block_on(async move {
                             track.write_sample(&Sample {
                                 data: Bytes::copy_from_slice(map.as_slice()),
-                                duration,
+                                duration: Duration::from_millis((duration.as_millis() * diff_duration.as_millis()).try_into().unwrap()),
                                 ..Sample::default()
                             }).await
                         }).expect("Failed to write sample");
+
+                        let _ = last_sample_timestamp.lock().unwrap().insert(Instant::now());
 
                         Ok(gst::FlowSuccess::Ok)
                     });
