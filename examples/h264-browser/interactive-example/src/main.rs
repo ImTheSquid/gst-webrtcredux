@@ -51,7 +51,7 @@ async fn main() -> Result<()> {
     let webrtcredux = WebRtcRedux::default();
 
     webrtcredux.add_ice_servers(vec![RTCIceServer {
-        urls: vec!["stun:stun.l.google.com:19302".to_string()],
+        urls: vec!["stun:stun.comrex.com:3478".to_string()],
         ..Default::default()
     }]);
 
@@ -61,15 +61,18 @@ async fn main() -> Result<()> {
 
     let video_src = gst::ElementFactory::make("videotestsrc", None)?;
 
-    let audio_encoder = gst::ElementFactory::make("x264enc", None)?;
+    let video_encoder = gst::ElementFactory::make("x264enc", None)?;
 
-    pipeline.add_many(&[&video_src, &audio_encoder])?;
+    pipeline.add_many(&[&video_src, &video_encoder])?;
 
-    Element::link_many(&[&video_src, &audio_encoder, webrtcredux.as_ref()])?;
+    Element::link_many(&[&video_src, &video_encoder, webrtcredux.as_ref()])?;
 
     webrtcredux.set_stream_id("video_0", "webrtc-rs")?;
 
     let audio_src = gst::ElementFactory::make("audiotestsrc", None)?;
+
+    audio_src.set_property_from_str("wave", "ticks");
+    audio_src.set_property_from_str("tick-interval", "500000000");
 
     let audio_encoder = gst::ElementFactory::make("opusenc", None)?;
 
