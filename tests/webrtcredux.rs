@@ -272,7 +272,7 @@ fn sdp_serialization() {
 
     let test = SDP { props };
 
-    assert_eq!(test.to_string(), target);
+    assert_eq!(test.to_string(), target.replace('\n', "\r\n"));
 }
 
 #[test]
@@ -546,5 +546,5 @@ fn sdp_symmetry() {
 
     assert!(sdp.is_ok());
 
-    assert_eq!(text.replace("\r\n", "\n"), sdp.unwrap().to_string());
+    assert_eq!(text, sdp.unwrap().to_string());
 }
