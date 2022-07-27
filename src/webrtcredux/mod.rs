@@ -6,9 +6,6 @@ use gst::ErrorMessage;
 mod imp;
 
 pub use imp::*;
-use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
-use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
-use webrtc::ice_transport::ice_gatherer_state::RTCIceGathererState;
 
 use self::sdp::SDP;
 pub mod sdp;
@@ -42,6 +39,10 @@ impl WebRtcRedux {
             .await
     }
 
+    pub async fn gathering_complete_promise(&self) -> Result<tokio::sync::mpsc::Receiver<()>, ErrorMessage> {
+        imp::WebRtcRedux::from_instance(self).gathering_complete_promise().await
+    }
+
     pub async fn create_answer(
         &self,
         options: Option<RTCAnswerOptions>
@@ -49,6 +50,19 @@ impl WebRtcRedux {
         imp::WebRtcRedux::from_instance(self)
             .create_answer(options)
             .await
+    }
+
+    pub async fn create_answer_raw(
+        &self,
+        options: Option<RTCAnswerOptions>
+    ) -> RTCSessionDescription {
+        imp::WebRtcRedux::from_instance(self)
+            .create_answer_raw(options)
+            .await
+    }
+
+    pub async fn local_description(&self) -> Result<Option<SDP>, ErrorMessage> {
+        imp::WebRtcRedux::from_instance(self).local_description().await
     }
 
     pub async fn set_local_description(&self, sdp: &SDP, sdp_type: RTCSdpType) -> Result<(), ErrorMessage> {
@@ -60,6 +74,12 @@ impl WebRtcRedux {
     pub async fn set_remote_description(&self, sdp: &SDP, sdp_type: RTCSdpType) -> Result<(), ErrorMessage> {
         imp::WebRtcRedux::from_instance(self)
             .set_remote_description(sdp, sdp_type)
+            .await
+    }
+
+    pub async fn set_local_description_raw(&self, desc: RTCSessionDescription) -> Result<(), webrtc::Error> {
+        imp::WebRtcRedux::from_instance(self)
+            .set_local_description_raw(desc)
             .await
     }
 
@@ -87,6 +107,15 @@ impl WebRtcRedux {
     {
         imp::WebRtcRedux::from_instance(self)
             .on_ice_gathering_state_change(f)
+            .await
+    }
+
+    pub async fn on_ice_connection_state_change<F>(&self, f: F) -> Result<(), ErrorMessage>
+        where
+            F: FnMut(RTCIceConnectionState) + Send + Sync + 'static,
+    {
+        imp::WebRtcRedux::from_instance(self)
+            .on_ice_connection_state_change(f)
             .await
     }
 

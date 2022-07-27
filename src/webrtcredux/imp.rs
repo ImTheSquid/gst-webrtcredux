@@ -27,14 +27,15 @@ use tokio::runtime;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::{MediaEngine, MIME_TYPE_H264, MIME_TYPE_OPUS, MIME_TYPE_G722, MIME_TYPE_VP8, MIME_TYPE_VP9, MIME_TYPE_PCMU, MIME_TYPE_PCMA};
 use webrtc::api::{APIBuilder, API};
-use webrtc::ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit};
-use webrtc::ice_transport::ice_gatherer_state::RTCIceGathererState;
+pub use webrtc::ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit};
+pub use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
+pub use webrtc::ice_transport::ice_gatherer_state::RTCIceGathererState;
 pub use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 pub use webrtc::peer_connection::offer_answer_options::RTCAnswerOptions;
 pub use webrtc::peer_connection::offer_answer_options::RTCOfferOptions;
 pub use webrtc::peer_connection::sdp::sdp_type::RTCSdpType;
-use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
+pub use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::track::track_local::TrackLocal;
@@ -343,6 +344,13 @@ impl WebRtcRedux {
         }
     }
 
+    pub async fn gathering_complete_promise(&self) -> Result<tokio::sync::mpsc::Receiver<()>, ErrorMessage> {
+        let webrtc_state = self.webrtc_state.lock().unwrap();
+        let peer_connection = WebRtcRedux::get_peer_connection(webrtc_state.as_ref().unwrap())?;
+
+        Ok(peer_connection.gathering_complete_promise().await)
+    }
+
     pub async fn create_offer(
         &self,
         options: Option<RTCOfferOptions>,
@@ -375,6 +383,16 @@ impl WebRtcRedux {
         }
     }
 
+    pub async fn local_description(&self) -> Result<Option<SDP>, ErrorMessage> {
+        let webrtc_state = self.webrtc_state.lock().unwrap();
+        let peer_connection = WebRtcRedux::get_peer_connection(webrtc_state.as_ref().unwrap())?;
+
+        match peer_connection.local_description().await {
+            None => Ok(None),
+            Some(res) => Ok(Some(SDP::from_str(&res.sdp).unwrap()))
+        }
+    }
+
     pub async fn set_local_description(&self, sdp: &SDP, sdp_type: RTCSdpType) -> Result<(), ErrorMessage> {
         let webrtc_state = self.webrtc_state.lock().unwrap();
         let peer_connection = WebRtcRedux::get_peer_connection(webrtc_state.as_ref().unwrap())?;
@@ -391,6 +409,20 @@ impl WebRtcRedux {
         }
 
         Ok(())
+    }
+
+    pub async fn set_local_description_raw(&self, desc: RTCSessionDescription) -> Result<(), webrtc::Error>{
+        let webrtc_state = self.webrtc_state.lock().unwrap();
+        let peer_connection = WebRtcRedux::get_peer_connection(webrtc_state.as_ref().unwrap()).unwrap();
+
+        peer_connection.set_local_description(desc).await
+    }
+
+    pub async fn create_answer_raw(&self, options: Option<RTCAnswerOptions>) -> RTCSessionDescription {
+        let webrtc_state = self.webrtc_state.lock().unwrap();
+        let peer_connection = WebRtcRedux::get_peer_connection(webrtc_state.as_ref().unwrap()).unwrap();
+
+        peer_connection.create_answer(options).await.unwrap()
     }
 
     pub async fn set_remote_description(&self, sdp: &SDP, sdp_type: RTCSdpType) -> Result<(), ErrorMessage> {
@@ -462,6 +494,23 @@ impl WebRtcRedux {
         Ok(())
     }
 
+    pub async fn on_ice_connection_state_change<F>(&self, mut f: F) -> Result<(), ErrorMessage>
+    where
+        F: FnMut(RTCIceConnectionState) + Send + Sync + 'static,
+    {
+        let webrtc_state = self.webrtc_state.lock().unwrap();
+        let peer_connection = WebRtcRedux::get_peer_connection(webrtc_state.as_ref().unwrap())?;
+
+        peer_connection
+            .on_ice_connection_state_change(Box::new(move |state| {
+                f(state);
+                Box::pin(async {})
+            }))
+            .await;
+
+        Ok(())
+    }
+
     pub async fn add_ice_candidate(
         &self,
         candidate: RTCIceCandidateInit,
@@ -500,6 +549,7 @@ impl ObjectSubclass for WebRtcRedux {
 
     fn with_class(_klass: &Self::Class) -> Self {
         let mut media_engine = MediaEngine::default();
+        media_engine.register_default_codecs().expect("Failed to register default codecs");
         let mut registry = Registry::new();
         registry = register_default_interceptors(registry, &mut media_engine)
             .expect("Failed to register default interceptors");
@@ -638,8 +688,8 @@ impl ElementImpl for WebRtcRedux {
 
                             let track = Arc::new(TrackLocalStaticSample::new(
                                 RTCRtpCodecCapability { 
-                                    mime_type: MediaType::from_str(mime).expect("Failed to parse mime type").webrtc_mime().to_string(), 
-                                    ..RTCRtpCodecCapability::default()
+                                    mime_type: MediaType::from_str(mime).expect("Failed to parse mime type").webrtc_mime().to_string(),
+                                    ..Default::default()
                                 }, 
                                 "video".to_string(), 
                                 stream_id
