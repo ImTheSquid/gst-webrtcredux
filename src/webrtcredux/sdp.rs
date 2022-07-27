@@ -549,12 +549,12 @@ impl ToString for SdpProp {
                         "".to_string()
                     } else {
                         format!(
-                            "\n{}",
+                            "\r\n{}",
                             props
                                 .iter()
                                 .map(|prop| prop.to_string())
                                 .collect::<Vec<String>>()
-                                .join("\n")
+                                .join("\r\n")
                         )
                     }
                 )
