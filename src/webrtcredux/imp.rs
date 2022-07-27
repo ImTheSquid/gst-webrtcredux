@@ -54,7 +54,6 @@ static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
 static RUNTIME: Lazy<runtime::Runtime> = Lazy::new(|| {
     runtime::Builder::new_multi_thread()
         .enable_all()
-        .worker_threads(1)
         .build()
         .unwrap()
 });
