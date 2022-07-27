@@ -44,15 +44,25 @@ async fn main() -> Result<()> {
         .add(&webrtcredux)
         .expect("Failed to add webrtcredux to the pipeline");
 
-    let src  =gst::ElementFactory::make("videotestsrc", None)?;
+    let video_src = gst::ElementFactory::make("videotestsrc", None)?;
 
-    let encoder = gst::ElementFactory::make("x264enc", None)?;
+    let audio_encoder = gst::ElementFactory::make("x264enc", None)?;
 
-    pipeline.add_many(&[&src, &encoder])?;
+    pipeline.add_many(&[&video_src, &audio_encoder])?;
 
-    Element::link_many(&[&src, &encoder, webrtcredux.as_ref()])?;
+    Element::link_many(&[&video_src, &audio_encoder, webrtcredux.as_ref()])?;
 
     webrtcredux.set_stream_id("video_0", "webrtc-rs")?;
+
+    let audio_src = gst::ElementFactory::make("audiotestsrc", None)?;
+
+    let audio_encoder = gst::ElementFactory::make("opusenc", None)?;
+
+    pipeline.add_many(&[&audio_src, &audio_encoder])?;
+
+    Element::link_many(&[&audio_src, &audio_encoder, webrtcredux.as_ref()])?;
+
+    webrtcredux.set_stream_id("audio_0", "webrtc-rs")?;
 
     let line = must_read_stdin()?;
     let sdp_offer_from_b64 = decode(line.as_str())?;
