@@ -11,3 +11,4 @@ gst-plugin-webrtcredux = { path = "../../../" }
 base64 = "0.13.0"
 anyhow = "1.0.58"
 tokio = "1.20.1"
+clipboard = "0.5.0"

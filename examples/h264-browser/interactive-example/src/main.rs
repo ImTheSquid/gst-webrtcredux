@@ -2,6 +2,9 @@ use std::str::FromStr;
 use gst::{Element};
 use gst::prelude::*;
 use anyhow::Result;
+use clipboard::{ClipboardContext, ClipboardProvider};
+use tokio::io;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use webrtcredux::{RTCIceConnectionState, RTCSdpType};
 
 use webrtcredux::webrtcredux::{
@@ -24,6 +27,18 @@ pub fn decode(s: &str) -> Result<String> {
 
     let s = String::from_utf8(b)?;
     Ok(s)
+}
+
+async fn pause() {
+    let mut stdin = io::stdin();
+    let mut stdout = io::stdout();
+
+    // We want the cursor to stay at the end of the line, so we print without a newline and flush manually.
+    stdout.write_all(b"\nPress Enter to continue...").await.unwrap();
+    stdout.flush().await.unwrap();
+
+    // Read a single byte and discard
+    let _ = stdin.read(&mut [0u8]).await.unwrap();
 }
 
 #[tokio::main]
@@ -64,7 +79,11 @@ async fn main() -> Result<()> {
 
     webrtcredux.set_stream_id("audio_0", "webrtc-rs")?;
 
-    let line = must_read_stdin()?;
+    let mut clipboard_handle = ClipboardContext::new().expect("Failed to create clipboard context");
+
+    pause().await;
+
+    let line = clipboard_handle.get_contents().expect("Failed to get clipboard contents");
     let sdp_offer_from_b64 = decode(line.as_str())?;
     let offer = SDP::from_str(&sdp_offer_from_b64).expect("Failed to parse SDP");
 
@@ -87,6 +106,8 @@ async fn main() -> Result<()> {
 
     if let Ok(Some(local_desc)) = webrtcredux.local_description().await {
         let b64 = base64::encode(local_desc.to_string());
+        clipboard_handle.set_contents(b64.clone()).expect("Failed to set clipboard contents");
+        println!("Base64 Session Description for the browser copied to the cliboard", );
         println!("{}", b64);
     } else {
         println!("generate local_description failed!");
