@@ -1,0 +1,8 @@
+textarea {
+    width: 75%;
+    min-height: 100px;
+}
+
+:root {
+    color-scheme: dark light;
+}
