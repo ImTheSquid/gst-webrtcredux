@@ -67,13 +67,11 @@ async fn main() -> Result<()> {
 
     webrtcredux.set_remote_description(&offer, RTCSdpType::Offer).await?;
 
-    //TODO: Use non raw method to create answer
-    let answer = webrtcredux.create_answer_raw(None).await;
+    let answer = webrtcredux.create_answer(None).await?;
 
     let mut gather_complete = webrtcredux.gathering_complete_promise().await?;
 
-    //TODO: Use non raw method to set local description
-    webrtcredux.set_local_description_raw(answer).await?;
+    webrtcredux.set_local_description(&answer, RTCSdpType::Answer).await?;
     
     let _ = gather_complete.recv().await;
 
