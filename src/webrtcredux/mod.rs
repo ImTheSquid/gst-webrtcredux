@@ -52,15 +52,6 @@ impl WebRtcRedux {
             .await
     }
 
-    pub async fn create_answer_raw(
-        &self,
-        options: Option<RTCAnswerOptions>
-    ) -> RTCSessionDescription {
-        imp::WebRtcRedux::from_instance(self)
-            .create_answer_raw(options)
-            .await
-    }
-
     pub async fn local_description(&self) -> Result<Option<SDP>, ErrorMessage> {
         imp::WebRtcRedux::from_instance(self).local_description().await
     }
@@ -74,12 +65,6 @@ impl WebRtcRedux {
     pub async fn set_remote_description(&self, sdp: &SDP, sdp_type: RTCSdpType) -> Result<(), ErrorMessage> {
         imp::WebRtcRedux::from_instance(self)
             .set_remote_description(sdp, sdp_type)
-            .await
-    }
-
-    pub async fn set_local_description_raw(&self, desc: RTCSessionDescription) -> Result<(), webrtc::Error> {
-        imp::WebRtcRedux::from_instance(self)
-            .set_local_description_raw(desc)
             .await
     }
 

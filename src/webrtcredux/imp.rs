@@ -35,7 +35,7 @@ use webrtc::peer_connection::configuration::RTCConfiguration;
 pub use webrtc::peer_connection::offer_answer_options::RTCAnswerOptions;
 pub use webrtc::peer_connection::offer_answer_options::RTCOfferOptions;
 pub use webrtc::peer_connection::sdp::sdp_type::RTCSdpType;
-pub use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
+use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::track::track_local::TrackLocal;
@@ -409,20 +409,6 @@ impl WebRtcRedux {
         }
 
         Ok(())
-    }
-
-    pub async fn set_local_description_raw(&self, desc: RTCSessionDescription) -> Result<(), webrtc::Error>{
-        let webrtc_state = self.webrtc_state.lock().unwrap();
-        let peer_connection = WebRtcRedux::get_peer_connection(webrtc_state.as_ref().unwrap()).unwrap();
-
-        peer_connection.set_local_description(desc).await
-    }
-
-    pub async fn create_answer_raw(&self, options: Option<RTCAnswerOptions>) -> RTCSessionDescription {
-        let webrtc_state = self.webrtc_state.lock().unwrap();
-        let peer_connection = WebRtcRedux::get_peer_connection(webrtc_state.as_ref().unwrap()).unwrap();
-
-        peer_connection.create_answer(options).await.unwrap()
     }
 
     pub async fn set_remote_description(&self, sdp: &SDP, sdp_type: RTCSdpType) -> Result<(), ErrorMessage> {
