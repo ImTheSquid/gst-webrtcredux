@@ -3,6 +3,8 @@ use gst::prelude::*;
 use gst::subclass::prelude::ObjectSubclassExt;
 use gst::ErrorMessage;
 
+mod sender;
+
 mod imp;
 
 pub use imp::*;
@@ -11,7 +13,7 @@ use self::sdp::SDP;
 pub mod sdp;
 
 glib::wrapper! {
-    pub struct WebRtcRedux(ObjectSubclass<imp::WebRtcRedux>) @extends gst_base::BaseTransform, gst::Element, gst::Object;
+    pub struct WebRtcRedux(ObjectSubclass<imp::WebRtcRedux>) @extends gst::Bin, gst::Element, gst::Object;
 }
 
 impl Default for WebRtcRedux {
@@ -118,7 +120,7 @@ pub fn register(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
     gst::Element::register(
         Some(plugin),
         "webrtcredux",
-        gst::Rank::Primary,
+        gst::Rank::None,
         WebRtcRedux::static_type(),
     )
 }
