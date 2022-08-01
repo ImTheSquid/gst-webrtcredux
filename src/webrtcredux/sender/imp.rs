@@ -16,6 +16,12 @@ pub struct WebRtcReduxSender {
     state: Mutex<State>,
 }
 
+impl WebRtcReduxSender {
+    pub fn add_track() {
+        todo!()
+    }
+}
+
 impl ElementImpl for WebRtcReduxSender {
     fn metadata() -> Option<&'static ElementMetadata> {
         static ELEMENT_METADATA: Lazy<gst::subclass::ElementMetadata> = Lazy::new(|| {
