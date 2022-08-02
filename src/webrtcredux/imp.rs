@@ -700,6 +700,38 @@ impl ElementImpl for WebRtcRedux {
         let mut ret = self.parent_change_state(element, transition);
 
         match transition {
+            gst::StateChange::NullToReady => {
+                let peer_connection = match self.webrtc_settings.lock().unwrap().config.take() {
+                    Some(config) => {
+                        //Acquiring lock before the future instead of cloning because we need to return a value which is dropped with it.
+                        let webrtc_state = self.webrtc_state.lock().unwrap();
+
+                        let future = async move {
+                            //TODO: Fix mutex with an async safe mutex
+                            webrtc_state
+                                .api
+                                .new_peer_connection(config)
+                                .await
+                                .map_err(|e| {
+                                    gst::error_msg!(
+                                gst::ResourceError::Failed,
+                                ["Failed to create PeerConnection: {:?}", e]
+                            )
+                                })
+                        };
+
+                        RUNTIME.block_on(future).unwrap()
+                    }
+                    None => {
+                        return Err(gst::StateChangeError);
+                    }
+                };
+
+                let _ = self.webrtc_state
+                    .lock()
+                    .unwrap()
+                    .peer_connection.insert(peer_connection);
+            }
             gst::StateChange::PausedToReady => {
                 if let Err(err) = self.unprepare(element) {
                     gst::element_error!(
