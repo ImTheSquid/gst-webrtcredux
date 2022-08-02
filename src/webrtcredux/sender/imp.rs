@@ -1,15 +1,22 @@
-use std::sync::Mutex;
+use std::sync::{Mutex, Arc};
+use std::time::Duration;
 
+use gst::prelude::ClockExtManual;
+use gst::traits::ClockExt;
 use gst::{Buffer, FlowError, FlowSuccess, glib, trace};
 use gst::subclass::ElementMetadata;
 use gst::subclass::prelude::*;
 use gst_base::subclass::prelude::*;
 use once_cell::sync::Lazy;
+use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
 
 use crate::webrtcredux::CAT;
 
 #[derive(Default)]
-struct State {}
+struct State {
+    track: Option<Arc<TrackLocalStaticSample>>,
+    duration: Option<Duration>
+}
 
 #[derive(Default)]
 pub struct WebRtcReduxSender {
@@ -17,8 +24,9 @@ pub struct WebRtcReduxSender {
 }
 
 impl WebRtcReduxSender {
-    pub fn add_track() {
-        todo!()
+    pub fn add_info(&self, track: Arc<TrackLocalStaticSample>, duration: Option<Duration>) {
+        let _ = self.state.lock().unwrap().track.insert(track);
+        self.state.lock().unwrap().duration = duration;
     }
 }
 

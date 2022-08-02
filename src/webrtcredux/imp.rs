@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::Duration;
 
 use anyhow::{Context, Error};
+use gst::{EventView, fixme};
 use gst::{error, ErrorMessage, glib, info, prelude::*, traits::{ElementExt, GstObjectExt}};
 use gst_video::subclass::prelude::*;
 use interceptor::registry::Registry;
@@ -23,6 +25,8 @@ pub use webrtc::peer_connection::offer_answer_options::RTCOfferOptions;
 use webrtc::peer_connection::RTCPeerConnection;
 pub use webrtc::peer_connection::sdp::sdp_type::RTCSdpType;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
+use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
+use webrtc::track::track_local::TrackLocal;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
 use crate::webrtcredux::sender::WebRtcReduxSender;
 
@@ -95,7 +99,7 @@ impl MediaType {
 enum MediaState {
     NotConfigured,
     IdConfigured(String),
-    Configured { track: Arc<TrackLocalStaticSample>, duration: Duration },
+    Configured { track: Arc<TrackLocalStaticSample>, duration: Option<Duration> },
 }
 
 #[derive(Debug, Clone)]
@@ -175,9 +179,9 @@ impl Default for WebRtcState {
 
 #[derive(Default)]
 struct State {
-    video_state: HashMap<usize, MediaState>,
+    video_state: HashMap<usize, String>,
     next_video_pad_id: usize,
-    audio_state: HashMap<usize, MediaState>,
+    audio_state: HashMap<usize, String>,
     next_audio_pad_id: usize,
     streams: HashMap<String, InputStream>,
 }
@@ -197,7 +201,7 @@ impl Default for WebRtcSettings {
 #[derive(Default)]
 pub struct WebRtcRedux {
     state: Mutex<State>,
-    webrtc_state: Mutex<WebRtcState>,
+    webrtc_state: Arc<Mutex<WebRtcState>>,
     webrtc_settings: Mutex<WebRtcSettings>,
 }
 
@@ -242,8 +246,73 @@ impl WebRtcRedux {
 
     fn sink_event(&self, pad: &gst::Pad, element: &super::WebRtcRedux, event: gst::Event) -> bool {
         match event.view() {
-            _ => pad.event_default(Some(element), event),
+            EventView::Caps(caps) => {
+                self.create_track(&pad.name(), caps);
+                pad.event_default(Some(element), event)
+            },
+            _ => pad.event_default(Some(element), event)
         }
+    }
+
+    fn create_track(&self, name: &str, caps: &gst::event::Caps) {
+        let name_parts = name.split('_').collect::<Vec<_>>();
+        let id: usize = name_parts[1].parse().unwrap();
+
+        let caps = caps.structure().unwrap().get::<gst::Caps>("caps").unwrap();
+        let structure = caps.structure(0).unwrap();
+        let mime = structure.name();
+        let duration = if name.starts_with("video") {
+            let framerate = structure.get::<gst::Fraction>("framerate").unwrap().0;
+            Some(Duration::from_millis(((*framerate.denom() as f64 / *framerate.numer() as f64)  * 1000.0).round() as u64))
+        } else {
+            None
+        };
+
+        // TODO: Clean up
+        let stream_id = if name.starts_with("video") {
+            let state = self.state.lock().unwrap();
+            let value = state.video_state.get(&id);
+            if let Some(value) = value {
+                value.to_owned()
+            } else {
+                fixme!(CAT, "Using pad name as stream_id for video pad {}, consider setting before pipeline starts", name);
+                format!("video_{}", id)
+            }
+        } else {
+            let state = self.state.lock().unwrap();
+            let value = state.audio_state.get(&id);
+            if let Some(value) = value {
+                value.to_owned()
+            } else {
+                fixme!(CAT, "Using pad name as stream_id for video pad {}, consider setting before pipeline starts", name);
+                format!("audio_{}", id)
+            }
+        };
+
+        let track  = Arc::new(TrackLocalStaticSample::new(
+            RTCRtpCodecCapability {
+                mime_type: MediaType::from_str(mime).expect("Failed to parse mime type").webrtc_mime().to_string(),
+                ..RTCRtpCodecCapability::default()
+            }, 
+            name_parts[0].to_string(), 
+            stream_id
+        ));
+
+        let webrtc_state = self.webrtc_state.clone();
+        let track_arc = track.clone();
+        let rtp_sender = RUNTIME.block_on(async move {
+            webrtc_state.lock().unwrap().peer_connection.as_ref().unwrap().add_track(Arc::clone(&track_arc) as Arc<dyn TrackLocal + Send + Sync>).await
+        }).expect("Failed to add track");
+
+        thread::spawn(move || {
+            RUNTIME.block_on(async move {
+                let mut rtcp_buf = vec![0u8; 1500];
+                while let Ok((_, _)) = rtp_sender.read(&mut rtcp_buf).await {}
+                anyhow::Result::<()>::Ok(())
+            })
+        });
+
+        self.state.lock().unwrap().streams.get(name).unwrap().sender.as_ref().unwrap().add_info(track, duration);
     }
 
     pub fn set_stream_id(&self, pad_name: &str, stream_id: &str) -> Result<(), ErrorMessage> {
@@ -286,7 +355,7 @@ impl WebRtcRedux {
 
                 self.state.lock().unwrap()
                     .video_state
-                    .insert(id, current.add_id(stream_id));
+                    .insert(id, stream_id.to_string());
 
                 Ok(())
             }
@@ -312,7 +381,7 @@ impl WebRtcRedux {
                     .lock()
                     .unwrap()
                     .audio_state
-                    .insert(id, current.add_id(stream_id));
+                    .insert(id, stream_id.to_string());
 
                 Ok(())
             }
