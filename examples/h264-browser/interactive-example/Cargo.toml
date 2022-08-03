@@ -6,7 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-gst = { package = "gstreamer", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs", features = ["v1_16"] }
+# gst = { package = "gstreamer", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs", features = ["v1_16"] }
+gst = { package = "gstreamer", version = "0.18.0", features = ["v1_16"] }
 gst-plugin-webrtcredux = { path = "../../../" }
 base64 = "0.13.0"
 anyhow = "1.0.58"

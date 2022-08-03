@@ -5,8 +5,14 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use anyhow::{Context, Error};
 use futures::executor::block_on;
-use gst::{EventView, fixme};
-use gst::{error, ErrorMessage, glib, info, prelude::*, traits::{ElementExt, GstObjectExt}};
+use gst::{
+    gst_debug as debug,
+    gst_error as error,
+    gst_info as info,
+    gst_fixme as fixme,
+    EventView, EventRef
+};
+use gst::{ErrorMessage, glib, prelude::*, traits::{ElementExt, GstObjectExt}};
 use gst_video::subclass::prelude::*;
 use interceptor::registry::Registry;
 use once_cell::sync::Lazy;
@@ -189,7 +195,7 @@ pub struct WebRtcRedux {
 
 impl WebRtcRedux {
     fn prepare(&self, element: &super::WebRtcRedux) -> Result<(), Error> {
-        gst::debug!(CAT, obj: element, "preparing");
+        debug!(CAT, obj: element, "preparing");
 
         self.state
             .lock()
@@ -229,14 +235,14 @@ impl WebRtcRedux {
     fn sink_event(&self, pad: &gst::Pad, element: &super::WebRtcRedux, event: gst::Event) -> bool {
         match event.view() {
             EventView::Caps(caps) => {
-                self.create_track(&pad.name(), caps);
+                self.create_track(&pad.name(), &caps);
                 pad.event_default(Some(element), event)
             },
             _ => pad.event_default(Some(element), event)
         }
     }
 
-    fn create_track(&self, name: &str, caps: &gst::event::Caps) {
+    fn create_track(&self, name: &str, caps: &gst::event::Caps<&EventRef>) {
         let name_parts = name.split('_').collect::<Vec<_>>();
         let id: usize = name_parts[1].parse().unwrap();
 

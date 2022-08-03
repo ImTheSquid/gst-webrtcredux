@@ -5,7 +5,7 @@ use bytes::Bytes;
 use futures::executor::block_on;
 use gst::prelude::ClockExtManual;
 use gst::traits::ClockExt;
-use gst::{Buffer, FlowError, FlowSuccess, glib, trace, ClockTime};
+use gst::{Buffer, FlowError, FlowSuccess, glib, gst_trace as trace, ClockTime};
 use gst::subclass::ElementMetadata;
 use gst::subclass::prelude::*;
 use gst_base::subclass::prelude::*;
