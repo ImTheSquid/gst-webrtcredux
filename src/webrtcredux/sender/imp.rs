@@ -65,7 +65,7 @@ impl ElementImpl for WebRtcReduxSender {
                 .structure(gst::Structure::builder("audio/G722").build())
                 .structure(gst::Structure::builder("audio/x-mulaw").build())
                 .structure(gst::Structure::builder("audio/x-alaw").build())
-                .structure(gst::Structure::builder("video/x-h264").build())
+                .structure(gst::Structure::builder("video/x-h264").field("stream-format", "byte-stream").field("profile", "baseline").build())
                 .structure(gst::Structure::builder("video/x-vp8").build())
                 .structure(gst::Structure::builder("video/x-vp9").build())
                 .build();
