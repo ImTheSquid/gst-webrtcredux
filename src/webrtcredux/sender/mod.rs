@@ -1,11 +1,12 @@
-use std::{sync::{Mutex, Arc}, time::Duration};
+use std::sync::Arc;
 
-use gst::glib;
+use gst::{glib, ClockTime};
 use gst::subclass::prelude::ObjectSubclassExt;
 
 mod imp;
 
 pub use imp::*;
+use tokio::runtime::Handle;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
 
 glib::wrapper! {
@@ -13,8 +14,8 @@ glib::wrapper! {
 }
 
 impl WebRtcReduxSender {
-    pub fn add_info(&self, track: Arc<TrackLocalStaticSample>, duration: Option<Duration>) {
-        imp::WebRtcReduxSender::from_instance(self).add_info(track, duration);
+    pub fn add_info(&self, track: Arc<TrackLocalStaticSample>, handle: Handle, media_type: MediaType, duration: Option<ClockTime>) {
+        imp::WebRtcReduxSender::from_instance(self).add_info(track, handle, media_type, duration);
     }
 }
 

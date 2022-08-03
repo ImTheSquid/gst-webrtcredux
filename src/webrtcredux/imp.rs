@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Duration;
 use tokio::sync::Mutex as AsyncMutex;
 
 use anyhow::{Context, Error};
@@ -97,13 +95,6 @@ impl MediaType {
     }
 }
 
-#[derive(Clone)]
-enum MediaState {
-    NotConfigured,
-    IdConfigured(String),
-    Configured { track: Arc<TrackLocalStaticSample>, duration: Option<Duration> },
-}
-
 #[derive(Debug, Clone)]
 struct InputStream {
     sink_pad: gst::GhostPad,
@@ -142,26 +133,6 @@ impl InputStream {
             sender.set_state(gst::State::Null).unwrap();
         }
     }
-}
-
-impl MediaState {
-    fn add_id(&self, new_id: &str) -> Self {
-        match self {
-            MediaState::NotConfigured => MediaState::IdConfigured(new_id.to_string()),
-            MediaState::IdConfigured(_) => MediaState::IdConfigured(new_id.to_string()),
-            MediaState::Configured { .. } => self.to_owned(),
-        }
-    }
-
-    /*fn add_track(&self, track: Arc<TrackLocalStaticSample>, duration: Duration) -> Self {
-        match self {
-            MediaState::NotConfigured => unreachable!("Shouldn't be able to set track without ID"),
-            _ => MediaState::Configured {
-                track,
-                duration,
-            }
-        }
-    }*/
 }
 
 struct WebRtcState {
@@ -274,7 +245,7 @@ impl WebRtcRedux {
         let mime = structure.name();
         let duration = if name.starts_with("video") {
             let framerate = structure.get::<gst::Fraction>("framerate").unwrap().0;
-            Some(Duration::from_millis(((*framerate.denom() as f64 / *framerate.numer() as f64)  * 1000.0).round() as u64))
+            Some(gst::ClockTime::from_mseconds(((*framerate.denom() as f64 / *framerate.numer() as f64)  * 1000.0).round() as u64))
         } else {
             None
         };
@@ -324,7 +295,13 @@ impl WebRtcRedux {
             anyhow::Result::<()>::Ok(())
         });
 
-        self.state.lock().unwrap().streams.get(name).unwrap().sender.as_ref().unwrap().add_info(track, duration);
+        let media_type = match name_parts[0] {
+            "video" => crate::webrtcredux::sender::MediaType::Video,
+            "audio" => crate::webrtcredux::sender::MediaType::Audio,
+            _ => unreachable!()
+        };
+
+        self.state.lock().unwrap().streams.get(name).unwrap().sender.as_ref().unwrap().add_info(track, self.runtime_handle(), media_type, duration);
     }
 
     pub fn set_stream_id(&self, pad_name: &str, stream_id: &str) -> Result<(), ErrorMessage> {
@@ -361,10 +338,6 @@ impl WebRtcRedux {
                     ));
                 }
 
-                let current = self.state.lock().unwrap().video_state.get(&id)
-                    .unwrap()
-                    .to_owned();
-
                 self.state.lock().unwrap()
                     .video_state
                     .insert(id, stream_id.to_string());
@@ -384,10 +357,6 @@ impl WebRtcRedux {
                         [&format!("Invalid ID: {}", id)]
                     ));
                 }
-
-                let current = self.state.lock().unwrap().video_state.get(&id)
-                    .unwrap()
-                    .to_owned();
 
                 self.state
                     .lock()

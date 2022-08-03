@@ -1,21 +1,33 @@
 use std::sync::{Mutex, Arc};
 use std::time::Duration;
 
+use bytes::Bytes;
+use futures::executor::block_on;
 use gst::prelude::ClockExtManual;
 use gst::traits::ClockExt;
-use gst::{Buffer, FlowError, FlowSuccess, glib, trace};
+use gst::{Buffer, FlowError, FlowSuccess, glib, trace, ClockTime};
 use gst::subclass::ElementMetadata;
 use gst::subclass::prelude::*;
 use gst_base::subclass::prelude::*;
 use once_cell::sync::Lazy;
+use tokio::runtime::Handle;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
+use webrtc_media::Sample;
 
 use crate::webrtcredux::CAT;
+
+#[derive(PartialEq, Eq)]
+pub enum MediaType {
+    Video,
+    Audio
+}
 
 #[derive(Default)]
 struct State {
     track: Option<Arc<TrackLocalStaticSample>>,
-    duration: Option<Duration>
+    duration: Option<ClockTime>,
+    handle: Option<Handle>,
+    media_type: Option<MediaType>
 }
 
 #[derive(Default)]
@@ -24,8 +36,10 @@ pub struct WebRtcReduxSender {
 }
 
 impl WebRtcReduxSender {
-    pub fn add_info(&self, track: Arc<TrackLocalStaticSample>, duration: Option<Duration>) {
+    pub fn add_info(&self, track: Arc<TrackLocalStaticSample>, handle: Handle, media_type: MediaType, duration: Option<ClockTime>) {
         let _ = self.state.lock().unwrap().track.insert(track);
+        let _ = self.state.lock().unwrap().handle.insert(handle);
+        let _ = self.state.lock().unwrap().media_type.insert(media_type);
         self.state.lock().unwrap().duration = duration;
     }
 }
@@ -68,11 +82,49 @@ impl ElementImpl for WebRtcReduxSender {
 
         PAD_TEMPLATES.as_ref()
     }
+
+    fn change_state(&self, element: &Self::Type, transition: gst::StateChange) -> Result<gst::StateChangeSuccess, gst::StateChangeError> {
+        if transition == gst::StateChange::PausedToPlaying {
+            if let Some(duration) = self.state.lock().unwrap().duration {
+                self.set_clock(element, Some(&format_clock(duration)));
+            }
+        }
+
+        self.parent_change_state(element, transition)
+    }
 }
 
 impl BaseSinkImpl for WebRtcReduxSender {
     fn render(&self, element: &Self::Type, buffer: &Buffer) -> Result<FlowSuccess, FlowError> {
-        trace!(CAT, "rendering");
+        let sample_duration = if *self.state.lock().unwrap().media_type.as_ref().unwrap() == MediaType::Video {
+            Duration::from_secs(1)
+        } else {
+            Duration::from_millis(buffer.duration().unwrap().mseconds())
+        };
+
+        // If the clock hasn't been set, set it from the buffer timestamp
+        if self.state.lock().unwrap().duration.is_none() {
+            let _ = self.state.lock().unwrap().duration.insert(buffer.duration().unwrap());
+            self.set_clock(element, Some(&format_clock(buffer.duration().unwrap())));
+        }
+
+        let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
+        trace!(CAT, "Rendering {} bytes", map.size());
+        let bytes = Bytes::copy_from_slice(map.as_slice());
+
+        let handle = self.state.lock().unwrap().handle.as_ref().unwrap().clone();
+        let track = self.state.lock().unwrap().track.as_ref().unwrap().clone();
+        block_on(async move {
+            handle.spawn(async move {
+                track.write_sample(&Sample {
+                    data: bytes,
+                    duration: sample_duration,
+                    ..Sample::default()
+                }).await
+            })
+            .await
+        }).expect("Failed to send data").unwrap();
+
         Ok(gst::FlowSuccess::Ok)
     }
 }
@@ -87,3 +139,10 @@ impl ObjectSubclass for WebRtcReduxSender {
 impl ObjectImpl for WebRtcReduxSender {}
 
 impl GstObjectImpl for WebRtcReduxSender {}
+
+fn format_clock(duration: ClockTime) -> gst::Clock {
+    let clock = gst::SystemClock::obtain();
+    let _ = clock.new_periodic_id(clock.internal_time(), duration);
+
+    clock
+}

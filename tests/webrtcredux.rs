@@ -152,8 +152,6 @@ fn pipeline_creation_test(encoders: Vec<Encoder>) {
         .add(&webrtcredux)
         .expect("Failed to add webrtcredux to the pipeline");
 
-    let mut audio_idx: usize = 0;
-    let mut video_idx: usize = 0;
     for encoder_to_use in &encoders {
         let src = match encoder_to_use {
             Encoder::Audio(_) => gst::ElementFactory::make("audiotestsrc", None).unwrap(),
