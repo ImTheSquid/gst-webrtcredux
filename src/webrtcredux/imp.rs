@@ -23,12 +23,13 @@ use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::{MediaEngine, MIME_TYPE_G722, MIME_TYPE_H264, MIME_TYPE_OPUS, MIME_TYPE_PCMA, MIME_TYPE_PCMU, MIME_TYPE_VP8, MIME_TYPE_VP9};
 pub use webrtc::ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit};
 pub use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
+use webrtc::ice_transport::ice_gatherer::{OnLocalCandidateHdlrFn, OnICEGathererStateChangeHdlrFn};
 pub use webrtc::ice_transport::ice_gatherer_state::RTCIceGathererState;
 pub use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 pub use webrtc::peer_connection::offer_answer_options::RTCAnswerOptions;
 pub use webrtc::peer_connection::offer_answer_options::RTCOfferOptions;
-use webrtc::peer_connection::RTCPeerConnection;
+use webrtc::peer_connection::{RTCPeerConnection, OnNegotiationNeededHdlrFn, OnICEConnectionStateChangeHdlrFn};
 pub use webrtc::peer_connection::sdp::sdp_type::RTCSdpType;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
@@ -466,69 +467,49 @@ impl WebRtcRedux {
         Ok(())
     }
 
-    pub async fn on_negotiation_needed<F>(&self, mut f: F) -> Result<(), ErrorMessage>
-        where
-            F: FnMut() + Send + Sync + 'static,
+    pub async fn on_negotiation_needed(&self, f: OnNegotiationNeededHdlrFn) -> Result<(), ErrorMessage>
     {
         let webrtc_state = self.webrtc_state.lock().await;
         let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         peer_connection
-            .on_negotiation_needed(Box::new(move || {
-                f();
-                Box::pin(async {})
-            }))
+            .on_negotiation_needed(Box::new(f))
             .await;
 
         Ok(())
     }
 
-    pub async fn on_ice_candidate<F>(&self, mut f: F) -> Result<(), ErrorMessage>
-        where
-            F: FnMut(Option<RTCIceCandidate>) + Send + Sync + 'static,
+    pub async fn on_ice_candidate(&self, f: OnLocalCandidateHdlrFn) -> Result<(), ErrorMessage>
     {
         let webrtc_state = self.webrtc_state.lock().await;
         let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         peer_connection
-            .on_ice_candidate(Box::new(move |candidate| {
-                f(candidate);
-                Box::pin(async {})
-            }))
+            .on_ice_candidate(Box::new(f))
             .await;
 
         Ok(())
     }
 
-    pub async fn on_ice_gathering_state_change<F>(&self, mut f: F) -> Result<(), ErrorMessage>
-        where
-            F: FnMut(RTCIceGathererState) + Send + Sync + 'static,
+    pub async fn on_ice_gathering_state_change(&self, f: OnICEGathererStateChangeHdlrFn) -> Result<(), ErrorMessage>
     {
         let webrtc_state = self.webrtc_state.lock().await;
         let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         peer_connection
-            .on_ice_gathering_state_change(Box::new(move |state| {
-                f(state);
-                Box::pin(async {})
-            }))
+            .on_ice_gathering_state_change(Box::new(f))
             .await;
 
         Ok(())
     }
 
-    pub async fn on_ice_connection_state_change<F>(&self, mut f: F) -> Result<(), ErrorMessage>
-        where
-            F: FnMut(RTCIceConnectionState) + Send + Sync + 'static,
+    pub async fn on_ice_connection_state_change(&self, f: OnICEConnectionStateChangeHdlrFn) -> Result<(), ErrorMessage>
     {
         let webrtc_state = self.webrtc_state.lock().await;
         let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         peer_connection
-            .on_ice_connection_state_change(Box::new(move |state| {
-                f(state);
-                Box::pin(async {})
-            }))
+            .on_ice_connection_state_change(Box::new(f))
             .await;
 
         Ok(())

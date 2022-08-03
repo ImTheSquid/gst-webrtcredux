@@ -101,6 +101,8 @@ async fn main() -> Result<()> {
 
     webrtcredux.on_ice_connection_state_change(Box::new(move |connection_state: RTCIceConnectionState| {
         println!("Connection State has changed {}", connection_state);
+
+        Box::pin(async {})
     }))
         .await?;
 

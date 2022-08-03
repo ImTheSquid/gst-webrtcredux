@@ -9,6 +9,10 @@ mod imp;
 
 pub use imp::*;
 use tokio::runtime::Handle;
+use webrtc::ice_transport::ice_gatherer::OnICEGathererStateChangeHdlrFn;
+use webrtc::ice_transport::ice_gatherer::OnLocalCandidateHdlrFn;
+use webrtc::peer_connection::OnICEConnectionStateChangeHdlrFn;
+use webrtc::peer_connection::OnNegotiationNeededHdlrFn;
 
 use self::sdp::SDP;
 pub mod sdp;
@@ -71,36 +75,28 @@ impl WebRtcRedux {
             .await
     }
 
-    pub async fn on_negotiation_needed<F>(&self, f: F) -> Result<(), ErrorMessage>
-    where
-        F: FnMut() + Send + Sync + 'static,
+    pub async fn on_negotiation_needed(&self, f: OnNegotiationNeededHdlrFn) -> Result<(), ErrorMessage>
     {
         imp::WebRtcRedux::from_instance(self)
             .on_negotiation_needed(f)
             .await
     }
 
-    pub async fn on_ice_candidate<F>(&self, f: F) -> Result<(), ErrorMessage>
-    where
-        F: FnMut(Option<RTCIceCandidate>) + Send + Sync + 'static,
+    pub async fn on_ice_candidate(&self, f: OnLocalCandidateHdlrFn) -> Result<(), ErrorMessage>
     {
         imp::WebRtcRedux::from_instance(self)
             .on_ice_candidate(f)
             .await
     }
 
-    pub async fn on_ice_gathering_state_change<F>(&self, f: F) -> Result<(), ErrorMessage>
-    where
-        F: FnMut(RTCIceGathererState) + Send + Sync + 'static,
+    pub async fn on_ice_gathering_state_change(&self, f: OnICEGathererStateChangeHdlrFn) -> Result<(), ErrorMessage>
     {
         imp::WebRtcRedux::from_instance(self)
             .on_ice_gathering_state_change(f)
             .await
     }
 
-    pub async fn on_ice_connection_state_change<F>(&self, f: F) -> Result<(), ErrorMessage>
-        where
-            F: FnMut(RTCIceConnectionState) + Send + Sync + 'static,
+    pub async fn on_ice_connection_state_change(&self, f: OnICEConnectionStateChangeHdlrFn) -> Result<(), ErrorMessage>
     {
         imp::WebRtcRedux::from_instance(self)
             .on_ice_connection_state_change(f)
