@@ -168,24 +168,9 @@ fn pipeline_creation_test(encoders: Vec<Encoder>) {
         Element::link_many(&[&src, &encoder, webrtcredux.as_ref()])
             .expect("Failed to link elements");
 
-        match encoder_to_use {
-            Encoder::Audio(_) => {
-                let pad_name = &format!("audio_{}", audio_idx);
-                webrtcredux.set_stream_id(pad_name, pad_name).unwrap();
-                audio_idx += 1;
-            }
-            Encoder::Video(_) => {
-                let pad_name = &format!("video_{}", video_idx);
-                webrtcredux.set_stream_id(pad_name, pad_name).unwrap();
-                video_idx += 1;
-            }
-        }
     }
 
-    assert_eq!(
-        pipeline.set_state(gst::State::Playing).unwrap(),
-        gst::StateChangeSuccess::Success
-    );
+    pipeline.set_state(gst::State::Playing).expect("Failed to set pipeline state");
 
     // Debug diagram
     let out = debug_bin_to_dot_data(&pipeline, DebugGraphDetails::ALL);
