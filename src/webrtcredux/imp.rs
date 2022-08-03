@@ -301,7 +301,9 @@ impl WebRtcRedux {
             _ => unreachable!()
         };
 
-        self.state.lock().unwrap().streams.get(name).unwrap().sender.as_ref().unwrap().add_info(track, self.runtime_handle(), media_type, duration);
+        // Moving this out of the add_info call fixed a lockup, I'm not gonna question why
+        let handle = self.runtime_handle();
+        self.state.lock().unwrap().streams.get(name).unwrap().sender.as_ref().unwrap().add_info(track, handle, media_type, duration);
     }
 
     pub fn set_stream_id(&self, pad_name: &str, stream_id: &str) -> Result<(), ErrorMessage> {
