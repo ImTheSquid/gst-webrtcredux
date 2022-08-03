@@ -593,7 +593,7 @@ impl ElementImpl for WebRtcRedux {
     fn pad_templates() -> &'static [gst::PadTemplate] {
         static PAD_TEMPLATES: Lazy<Vec<gst::PadTemplate>> = Lazy::new(|| {
             let caps = gst::Caps::builder_full()
-                .structure(gst::Structure::builder("video/x-h264").build())
+                .structure(gst::Structure::builder("video/x-h264").field("stream-format", "byte-stream").field("profile", "baseline").build())
                 .structure(gst::Structure::builder("video/x-vp8").build())
                 .structure(gst::Structure::builder("video/x-vp9").build())
                 .build();
