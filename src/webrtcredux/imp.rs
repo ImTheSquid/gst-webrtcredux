@@ -119,6 +119,14 @@ impl InputStream {
 
         element.add(&sender).expect("Failed to add sender element");
 
+        element
+            .sync_children_states()
+            .with_context(|| format!("Linking input stream {}", self.sink_pad.name()))?;
+
+        self.sink_pad
+            .set_target(Some(&sender.static_pad("sink").unwrap()))
+            .unwrap();
+
         self.sender = Some(sender);
 
         Ok(())
