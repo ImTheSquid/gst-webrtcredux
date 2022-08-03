@@ -8,6 +8,7 @@ mod sender;
 mod imp;
 
 pub use imp::*;
+use tokio::runtime::Handle;
 
 use self::sdp::SDP;
 pub mod sdp;
@@ -113,6 +114,10 @@ impl WebRtcRedux {
         imp::WebRtcRedux::from_instance(self)
             .add_ice_candidate(candidate)
             .await
+    }
+
+    pub fn set_tokio_runtime(&self, handle: Handle) {
+        imp::WebRtcRedux::from_instance(self).set_tokio_runtime(handle)
     }
 }
 

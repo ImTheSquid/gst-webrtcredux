@@ -3,15 +3,17 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+use tokio::sync::Mutex as AsyncMutex;
 
 use anyhow::{Context, Error};
+use futures::executor::block_on;
 use gst::{EventView, fixme};
 use gst::{error, ErrorMessage, glib, info, prelude::*, traits::{ElementExt, GstObjectExt}};
 use gst_video::subclass::prelude::*;
 use interceptor::registry::Registry;
 use once_cell::sync::Lazy;
 use strum_macros::EnumString;
-use tokio::runtime;
+use tokio::runtime::{self, Handle};
 use webrtc::api::{API, APIBuilder};
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::{MediaEngine, MIME_TYPE_G722, MIME_TYPE_H264, MIME_TYPE_OPUS, MIME_TYPE_PCMA, MIME_TYPE_PCMU, MIME_TYPE_VP8, MIME_TYPE_VP9};
@@ -192,6 +194,7 @@ struct State {
     audio_state: HashMap<usize, String>,
     next_audio_pad_id: usize,
     streams: HashMap<String, InputStream>,
+    handle: Option<Handle>
 }
 
 struct WebRtcSettings {
@@ -209,7 +212,7 @@ impl Default for WebRtcSettings {
 #[derive(Default)]
 pub struct WebRtcRedux {
     state: Mutex<State>,
-    webrtc_state: Arc<Mutex<WebRtcState>>,
+    webrtc_state: Arc<AsyncMutex<WebRtcState>>,
     webrtc_settings: Mutex<WebRtcSettings>,
 }
 
@@ -308,16 +311,17 @@ impl WebRtcRedux {
 
         let webrtc_state = self.webrtc_state.clone();
         let track_arc = track.clone();
-        let rtp_sender = RUNTIME.block_on(async move {
-            webrtc_state.lock().unwrap().peer_connection.as_ref().unwrap().add_track(Arc::clone(&track_arc) as Arc<dyn TrackLocal + Send + Sync>).await
+        let handle = self.runtime_handle();
+        let rtp_sender = block_on(async move {
+            handle.spawn(async move {
+                webrtc_state.lock().await.peer_connection.as_ref().unwrap().add_track(Arc::clone(&track_arc) as Arc<dyn TrackLocal + Send + Sync>).await
+            }).await.unwrap()
         }).expect("Failed to add track");
 
-        thread::spawn(move || {
-            RUNTIME.block_on(async move {
-                let mut rtcp_buf = vec![0u8; 1500];
-                while let Ok((_, _)) = rtp_sender.read(&mut rtcp_buf).await {}
-                anyhow::Result::<()>::Ok(())
-            })
+        self.runtime_handle().spawn(async move {
+            let mut rtcp_buf = vec![0u8; 1500];
+            while let Ok((_, _)) = rtp_sender.read(&mut rtcp_buf).await {}
+            anyhow::Result::<()>::Ok(())
         });
 
         self.state.lock().unwrap().streams.get(name).unwrap().sender.as_ref().unwrap().add_info(track, duration);
@@ -401,7 +405,7 @@ impl WebRtcRedux {
     }
 
     pub async fn gathering_complete_promise(&self) -> Result<tokio::sync::mpsc::Receiver<()>, ErrorMessage> {
-        let webrtc_state = self.webrtc_state.lock().unwrap();
+        let webrtc_state = self.webrtc_state.lock().await;
         let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         Ok(peer_connection.gathering_complete_promise().await)
@@ -411,7 +415,7 @@ impl WebRtcRedux {
         &self,
         options: Option<RTCOfferOptions>,
     ) -> Result<SDP, ErrorMessage> {
-        let webrtc_state = self.webrtc_state.lock().unwrap();
+        let webrtc_state = self.webrtc_state.lock().await;
         let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         match peer_connection.create_offer(options).await {
@@ -427,7 +431,7 @@ impl WebRtcRedux {
         &self,
         options: Option<RTCAnswerOptions>,
     ) -> Result<SDP, ErrorMessage> {
-        let webrtc_state = self.webrtc_state.lock().unwrap();
+        let webrtc_state = self.webrtc_state.lock().await;
         let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         match peer_connection.create_answer(options).await {
@@ -440,7 +444,7 @@ impl WebRtcRedux {
     }
 
     pub async fn local_description(&self) -> Result<Option<SDP>, ErrorMessage> {
-        let webrtc_state = self.webrtc_state.lock().unwrap();
+        let webrtc_state = self.webrtc_state.lock().await;
         let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         match peer_connection.local_description().await {
@@ -450,7 +454,7 @@ impl WebRtcRedux {
     }
 
     pub async fn set_local_description(&self, sdp: &SDP, sdp_type: RTCSdpType) -> Result<(), ErrorMessage> {
-        let webrtc_state = self.webrtc_state.lock().unwrap();
+        let webrtc_state = self.webrtc_state.lock().await;
         let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         let mut default = RTCSessionDescription::default();
@@ -468,7 +472,7 @@ impl WebRtcRedux {
     }
 
     pub async fn set_remote_description(&self, sdp: &SDP, sdp_type: RTCSdpType) -> Result<(), ErrorMessage> {
-        let webrtc_state = self.webrtc_state.lock().unwrap();
+        let webrtc_state = self.webrtc_state.lock().await;
         let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         let mut default = RTCSessionDescription::default();
@@ -489,7 +493,7 @@ impl WebRtcRedux {
         where
             F: FnMut() + Send + Sync + 'static,
     {
-        let webrtc_state = self.webrtc_state.lock().unwrap();
+        let webrtc_state = self.webrtc_state.lock().await;
         let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         peer_connection
@@ -506,7 +510,7 @@ impl WebRtcRedux {
         where
             F: FnMut(Option<RTCIceCandidate>) + Send + Sync + 'static,
     {
-        let webrtc_state = self.webrtc_state.lock().unwrap();
+        let webrtc_state = self.webrtc_state.lock().await;
         let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         peer_connection
@@ -523,7 +527,7 @@ impl WebRtcRedux {
         where
             F: FnMut(RTCIceGathererState) + Send + Sync + 'static,
     {
-        let webrtc_state = self.webrtc_state.lock().unwrap();
+        let webrtc_state = self.webrtc_state.lock().await;
         let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         peer_connection
@@ -540,7 +544,7 @@ impl WebRtcRedux {
         where
             F: FnMut(RTCIceConnectionState) + Send + Sync + 'static,
     {
-        let webrtc_state = self.webrtc_state.lock().unwrap();
+        let webrtc_state = self.webrtc_state.lock().await;
         let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         peer_connection
@@ -557,7 +561,7 @@ impl WebRtcRedux {
         &self,
         candidate: RTCIceCandidateInit,
     ) -> Result<(), ErrorMessage> {
-        let webrtc_state = self.webrtc_state.lock().unwrap();
+        let webrtc_state = self.webrtc_state.lock().await;
         let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         if let Err(e) = peer_connection.add_ice_candidate(candidate).await {
@@ -568,6 +572,17 @@ impl WebRtcRedux {
         }
 
         Ok(())
+    }
+
+    pub fn set_tokio_runtime(
+        &self,
+        handle: Handle
+    ) {
+        let _ = self.state.lock().unwrap().handle.insert(handle);
+    }
+
+    fn runtime_handle(&self) -> Handle {
+        self.state.lock().unwrap().handle.as_ref().unwrap_or(RUNTIME.handle()).clone()
     }
 
     fn get_peer_connection(state: &WebRtcState) -> Result<&RTCPeerConnection, ErrorMessage> {
@@ -709,36 +724,43 @@ impl ElementImpl for WebRtcRedux {
 
         match transition {
             gst::StateChange::NullToReady => {
-                let peer_connection = match self.webrtc_settings.lock().unwrap().config.take() {
+                match self.webrtc_settings.lock().unwrap().config.take() {
                     Some(config) => {
                         //Acquiring lock before the future instead of cloning because we need to return a value which is dropped with it.
-                        let webrtc_state = self.webrtc_state.lock().unwrap();
+                        let webrtc_state = self.webrtc_state.clone();
 
                         let future = async move {
+                            let mut webrtc_state = webrtc_state.lock().await;
                             //TODO: Fix mutex with an async safe mutex
-                            webrtc_state
+                            let peer_connection = webrtc_state
                                 .api
                                 .new_peer_connection(config)
                                 .await
                                 .map_err(|e| {
                                     gst::error_msg!(
-                                gst::ResourceError::Failed,
-                                ["Failed to create PeerConnection: {:?}", e]
-                            )
-                                })
+                                        gst::ResourceError::Failed,
+                                        ["Failed to create PeerConnection: {:?}", e]
+                                    )
+                                });
+
+                            match peer_connection {
+                                Ok(conn) => {
+                                    let _ = webrtc_state.peer_connection.insert(conn);
+                                    Ok(())
+                                },
+                                Err(e) => Err(e)
+                            }
                         };
 
-                        RUNTIME.block_on(future).unwrap()
+                        let handle = self.runtime_handle();
+                        block_on(async move {
+                            handle.spawn(future).await.expect("Failed")
+                        }).expect("Failed outer");
                     }
                     None => {
                         return Err(gst::StateChangeError);
                     }
-                };
-
-                let _ = self.webrtc_state
-                    .lock()
-                    .unwrap()
-                    .peer_connection.insert(peer_connection);
+                }
             }
             gst::StateChange::PausedToReady => {
                 if let Err(err) = self.unprepare(element) {

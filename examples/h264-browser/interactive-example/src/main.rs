@@ -6,6 +6,7 @@ use clipboard::{ClipboardContext, ClipboardProvider};
 use tokio::io;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use webrtcredux::{RTCIceConnectionState, RTCSdpType};
+use tokio::runtime::Handle;
 
 use webrtcredux::webrtcredux::{
     sdp::{SDP},
@@ -49,6 +50,8 @@ async fn main() -> Result<()> {
     let pipeline = gst::Pipeline::new(None);
 
     let webrtcredux = WebRtcRedux::default();
+
+    webrtcredux.set_tokio_runtime(Handle::current());
 
     webrtcredux.add_ice_servers(vec![RTCIceServer {
         urls: vec!["stun:stun.comrex.com:3478".to_string()],
