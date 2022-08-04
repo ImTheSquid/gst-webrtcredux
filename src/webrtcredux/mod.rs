@@ -27,6 +27,9 @@ impl Default for WebRtcRedux {
     }
 }
 
+unsafe impl Send for WebRtcRedux {}
+unsafe impl Sync for WebRtcRedux {}
+
 //TODO: Add signal for those methods for compatibility with other programing languages
 impl WebRtcRedux {
     pub fn add_ice_servers(&self, ice_servers: Vec<RTCIceServer>) {
@@ -114,6 +117,10 @@ impl WebRtcRedux {
 
     pub fn set_tokio_runtime(&self, handle: Handle) {
         imp::WebRtcRedux::from_instance(self).set_tokio_runtime(handle)
+    }
+
+    pub async fn wait_for_all_tracks(&self) {
+        imp::WebRtcRedux::from_instance(self).wait_for_all_tracks().await
     }
 }
 

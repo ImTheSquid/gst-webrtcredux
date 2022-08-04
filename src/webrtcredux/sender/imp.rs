@@ -114,16 +114,18 @@ impl BaseSinkImpl for WebRtcReduxSender {
 
         let handle = self.state.lock().unwrap().handle.as_ref().unwrap().clone();
         let track = self.state.lock().unwrap().track.as_ref().unwrap().clone();
+        let inner = handle.clone();
         block_on(async move {
-            handle.spawn(async move {
-                track.write_sample(&Sample {
-                    data: bytes,
-                    duration: sample_duration,
-                    ..Sample::default()
-                }).await
-            })
-            .await
-        }).expect("Failed to send data").unwrap();
+            handle.spawn_blocking(move || {
+                inner.block_on(async move {
+                    track.write_sample(&Sample {
+                        data: bytes,
+                        duration: sample_duration,
+                        ..Sample::default()
+                    }).await
+                })
+            }).await
+        }).unwrap().unwrap();
 
         Ok(gst::FlowSuccess::Ok)
     }

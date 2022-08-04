@@ -1,10 +1,12 @@
 use std::collections::HashMap;
+use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
-use tokio::sync::Mutex as AsyncMutex;
+use futures::Future;
+use futures::executor::block_on;
+use tokio::sync::{Mutex as AsyncMutex, oneshot};
 
 use anyhow::{Context, Error};
-use futures::executor::block_on;
 use gst::{
     gst_debug as debug,
     gst_error as error,
@@ -53,6 +55,8 @@ static RUNTIME: Lazy<runtime::Runtime> = Lazy::new(|| {
         .build()
         .unwrap()
 });
+
+pub type OnAllTracksAddedFn = Box<dyn FnMut() -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> + Send + Sync>;
 
 #[derive(Debug, PartialEq, Eq, EnumString, Clone, Copy)]
 enum MediaType {
@@ -172,7 +176,10 @@ struct State {
     audio_state: HashMap<usize, String>,
     next_audio_pad_id: usize,
     streams: HashMap<String, InputStream>,
-    handle: Option<Handle>
+    handle: Option<Handle>,
+    on_all_tracks_added_send: Option<oneshot::Sender<()>>,
+    on_all_tracks_added: Option<oneshot::Receiver<()>>,
+    tracks: usize
 }
 
 struct WebRtcSettings {
@@ -290,11 +297,14 @@ impl WebRtcRedux {
         let webrtc_state = self.webrtc_state.clone();
         let track_arc = track.clone();
         let handle = self.runtime_handle();
+        let inner = handle.clone();
         let rtp_sender = block_on(async move {
-            handle.spawn(async move {
-                webrtc_state.lock().await.peer_connection.as_ref().unwrap().add_track(Arc::clone(&track_arc) as Arc<dyn TrackLocal + Send + Sync>).await
-            }).await.unwrap()
-        }).expect("Failed to add track");
+            handle.spawn_blocking(move || {
+                inner.block_on(async move {
+                    webrtc_state.lock().await.peer_connection.as_ref().unwrap().add_track(Arc::clone(&track_arc) as Arc<dyn TrackLocal + Send + Sync>).await
+                })
+            }).await
+        }).unwrap().unwrap();
 
         self.runtime_handle().spawn(async move {
             let mut rtcp_buf = vec![0u8; 1500];
@@ -311,6 +321,14 @@ impl WebRtcRedux {
         // Moving this out of the add_info call fixed a lockup, I'm not gonna question why
         let handle = self.runtime_handle();
         self.state.lock().unwrap().streams.get(name).unwrap().sender.as_ref().unwrap().add_info(track, handle, media_type, duration);
+
+        self.state.lock().unwrap().tracks += 1;
+        {
+            let mut state = self.state.lock().unwrap();
+            if state.tracks == state.next_audio_pad_id + state.next_video_pad_id {
+                state.on_all_tracks_added_send.take().unwrap().send(()).unwrap();
+            }
+        }
     }
 
     pub fn set_stream_id(&self, pad_name: &str, stream_id: &str) -> Result<(), ErrorMessage> {
@@ -539,6 +557,11 @@ impl WebRtcRedux {
         let _ = self.state.lock().unwrap().handle.insert(handle);
     }
 
+    pub async fn wait_for_all_tracks(&self) {
+        let all = self.state.lock().unwrap().on_all_tracks_added.take().unwrap();
+        all.await.unwrap();
+    }
+
     fn runtime_handle(&self) -> Handle {
         self.state.lock().unwrap().handle.as_ref().unwrap_or(RUNTIME.handle()).clone()
     }
@@ -687,33 +710,42 @@ impl ElementImpl for WebRtcRedux {
                         //Acquiring lock before the future instead of cloning because we need to return a value which is dropped with it.
                         let webrtc_state = self.webrtc_state.clone();
 
-                        let future = async move {
-                            let mut webrtc_state = webrtc_state.lock().await;
-                            //TODO: Fix mutex with an async safe mutex
-                            let peer_connection = webrtc_state
-                                .api
-                                .new_peer_connection(config)
-                                .await
-                                .map_err(|e| {
-                                    gst::error_msg!(
-                                        gst::ResourceError::Failed,
-                                        ["Failed to create PeerConnection: {:?}", e]
-                                    )
-                                });
-
-                            match peer_connection {
-                                Ok(conn) => {
-                                    let _ = webrtc_state.peer_connection.insert(conn);
-                                    Ok(())
-                                },
-                                Err(e) => Err(e)
-                            }
-                        };
+                        {
+                            let (tx, rx) = oneshot::channel();
+                            let mut state = self.state.lock().unwrap();
+                            let _ = state.on_all_tracks_added_send.insert(tx);
+                            let _ = state.on_all_tracks_added.insert(rx);
+                        }
 
                         let handle = self.runtime_handle();
+                        let inner = handle.clone();
+                        
                         block_on(async move {
-                            handle.spawn(future).await.expect("Failed")
-                        }).expect("Failed outer");
+                            handle.spawn_blocking(move || {
+                                inner.block_on(async move {
+                                    let mut webrtc_state = webrtc_state.lock().await;
+                                    //TODO: Fix mutex with an async safe mutex
+                                    let peer_connection = webrtc_state
+                                        .api
+                                        .new_peer_connection(config)
+                                        .await
+                                        .map_err(|e| {
+                                            gst::error_msg!(
+                                                gst::ResourceError::Failed,
+                                                ["Failed to create PeerConnection: {:?}", e]
+                                            )
+                                        });
+        
+                                    match peer_connection {
+                                        Ok(conn) => {
+                                            let _ = webrtc_state.peer_connection.insert(conn);
+                                            Ok(())
+                                        },
+                                        Err(e) => Err(e)
+                                    }
+                                }).unwrap();
+                            }).await
+                        }).unwrap();
                     }
                     None => {
                         return Err(gst::StateChangeError);

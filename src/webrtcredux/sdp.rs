@@ -346,7 +346,6 @@ impl FromStr for SdpProp {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let (key, value) = content_from_line(s)?;
         let tokens = value.split(' ').collect::<Vec<&str>>();
-        println!("Parsing line: {}", s);
 
         // TODO: Cut down on code copying from SDPProp to MediaProp
         match key {
