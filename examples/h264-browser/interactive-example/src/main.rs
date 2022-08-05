@@ -99,6 +99,12 @@ async fn main() -> Result<()> {
 
     pipeline.set_state(gst::State::Playing)?;
 
+    webrtcredux.on_peer_connection_state_change(Box::new(|state| {
+        println!("Peer connection state has changed {}", state);
+
+        Box::pin(async {})
+    })).await?;
+
     webrtcredux.on_ice_connection_state_change(Box::new(move |connection_state: RTCIceConnectionState| {
         println!("Connection State has changed {}", connection_state);
 
