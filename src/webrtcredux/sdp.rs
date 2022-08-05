@@ -4,7 +4,7 @@ use std::{
     str::FromStr,
 };
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum MediaProp {
     Title(String),
     Connection {
@@ -126,7 +126,7 @@ impl ToString for MediaProp {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum MediaType {
     Audio,
     Video,
@@ -160,7 +160,7 @@ impl ToString for MediaType {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum NetworkType {
     Internet,
 }
@@ -185,7 +185,7 @@ impl ToString for NetworkType {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum AddressType {
     IPv4,
     IPv6,
@@ -213,7 +213,7 @@ impl ToString for AddressType {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum BandwidthType {
     ConferenceTotal,
     ApplicationSpecific,
@@ -241,13 +241,13 @@ impl ToString for BandwidthType {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct TimeZoneAdjustment {
     time: usize,
     offset: String,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum EncryptionKeyMethod {
     Clear(String),
     Base64(String),
@@ -286,7 +286,7 @@ impl ToString for EncryptionKeyMethod {
 }
 
 // https://datatracker.ietf.org/doc/html/rfc4566#section-2
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum SdpProp {
     Version(u8),
     Origin {

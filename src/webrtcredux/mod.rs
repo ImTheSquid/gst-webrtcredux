@@ -13,6 +13,7 @@ use webrtc::ice_transport::ice_gatherer::OnICEGathererStateChangeHdlrFn;
 use webrtc::ice_transport::ice_gatherer::OnLocalCandidateHdlrFn;
 use webrtc::peer_connection::OnICEConnectionStateChangeHdlrFn;
 use webrtc::peer_connection::OnNegotiationNeededHdlrFn;
+use webrtc::peer_connection::OnPeerConnectionStateChangeHdlrFn;
 
 use self::sdp::SDP;
 pub mod sdp;
@@ -103,6 +104,13 @@ impl WebRtcRedux {
     {
         imp::WebRtcRedux::from_instance(self)
             .on_ice_connection_state_change(f)
+            .await
+    }
+
+    pub async fn on_peer_connection_state_change(&self, f: OnPeerConnectionStateChangeHdlrFn) -> Result<(), ErrorMessage>
+    {
+        imp::WebRtcRedux::from_instance(self)
+            .on_peer_connection_state_change(f)
             .await
     }
 

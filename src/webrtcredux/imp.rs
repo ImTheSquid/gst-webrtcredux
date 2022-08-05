@@ -31,7 +31,7 @@ pub use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 pub use webrtc::peer_connection::offer_answer_options::RTCAnswerOptions;
 pub use webrtc::peer_connection::offer_answer_options::RTCOfferOptions;
-use webrtc::peer_connection::{RTCPeerConnection, OnNegotiationNeededHdlrFn, OnICEConnectionStateChangeHdlrFn};
+use webrtc::peer_connection::{RTCPeerConnection, OnNegotiationNeededHdlrFn, OnICEConnectionStateChangeHdlrFn, OnPeerConnectionStateChangeHdlrFn};
 pub use webrtc::peer_connection::sdp::sdp_type::RTCSdpType;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
@@ -478,7 +478,7 @@ impl WebRtcRedux {
         if let Err(e) = peer_connection.set_remote_description(default).await {
             return Err(gst::error_msg!(
                 gst::ResourceError::Failed,
-                [&format!("Failed to set local description: {:?}", e)]
+                [&format!("Failed to set remote description: {:?}", e)]
             ));
         }
 
@@ -528,6 +528,17 @@ impl WebRtcRedux {
 
         peer_connection
             .on_ice_connection_state_change(Box::new(f))
+            .await;
+
+        Ok(())
+    }
+
+    pub async fn on_peer_connection_state_change(&self, f: OnPeerConnectionStateChangeHdlrFn) -> Result<(), ErrorMessage> {
+        let webrtc_state = self.webrtc_state.lock().await;
+        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
+
+        peer_connection
+            .on_peer_connection_state_change(Box::new(f))
             .await;
 
         Ok(())
