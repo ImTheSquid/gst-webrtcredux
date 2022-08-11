@@ -774,6 +774,27 @@ impl ElementImpl for WebRtcRedux {
                     return Err(gst::StateChangeError);
                 }
             }
+            gst::StateChange::ReadyToNull => {
+                //Acquiring lock before the future instead of cloning because we need to return a value which is dropped with it.
+                let webrtc_state = self.webrtc_state.clone();
+
+                let handle = self.runtime_handle();
+                let inner = handle.clone();
+
+                block_on(async move {
+                    handle.spawn_blocking(move || {
+                        inner.block_on(async move {
+                            let mut webrtc_state = webrtc_state.lock().await;
+                            //TODO: Fix mutex with an async safe mutex
+                            if let Some(conn) = webrtc_state.peer_connection.take() {
+                                conn.close().await
+                            } else {
+                                Ok(())
+                            }
+                        })
+                    }).await
+                }).unwrap().unwrap();
+            }
             gst::StateChange::ReadyToPaused => {
                 ret = Ok(gst::StateChangeSuccess::NoPreroll);
             }
