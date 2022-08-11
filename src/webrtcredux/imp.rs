@@ -37,6 +37,7 @@ use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::track::track_local::TrackLocal;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
+use crate::sdp::LineEnding;
 use crate::webrtcredux::sender::WebRtcReduxSender;
 
 use super::sdp::SDP;
@@ -148,7 +149,7 @@ impl InputStream {
 
 struct WebRtcState {
     api: API,
-    peer_connection: Option<RTCPeerConnection>,
+    peer_connection: Option<RTCPeerConnection>
 }
 
 impl Default for WebRtcState {
@@ -164,7 +165,7 @@ impl Default for WebRtcState {
                 .with_media_engine(media_engine)
                 .with_interceptor_registry(registry)
                 .build(),
-            peer_connection: Default::default(),
+            peer_connection: Default::default()
         }
     }
 }
@@ -454,7 +455,7 @@ impl WebRtcRedux {
         let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         let mut default = RTCSessionDescription::default();
-        default.sdp = sdp.to_string();
+        default.sdp = sdp.to_string(LineEnding::CRLF);
         default.sdp_type = sdp_type;
 
         if let Err(e) = peer_connection.set_local_description(default).await {
@@ -472,7 +473,7 @@ impl WebRtcRedux {
         let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         let mut default = RTCSessionDescription::default();
-        default.sdp = sdp.to_string();
+        default.sdp = sdp.to_string(LineEnding::CRLF);
         default.sdp_type = sdp_type;
 
         if let Err(e) = peer_connection.set_remote_description(default).await {

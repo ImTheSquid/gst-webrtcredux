@@ -124,11 +124,11 @@ impl WebRtcRedux {
     }
 
     pub fn set_tokio_runtime(&self, handle: Handle) {
-        imp::WebRtcRedux::from_instance(self).set_tokio_runtime(handle)
+        imp::WebRtcRedux::from_instance(self).set_tokio_runtime(handle);
     }
 
     pub async fn wait_for_all_tracks(&self) {
-        imp::WebRtcRedux::from_instance(self).wait_for_all_tracks().await
+        imp::WebRtcRedux::from_instance(self).wait_for_all_tracks().await;
     }
 }
 

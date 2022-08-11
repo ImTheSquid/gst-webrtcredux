@@ -4,6 +4,21 @@ use std::{
     str::FromStr,
 };
 
+#[derive(Debug, Clone, Copy)]
+pub enum LineEnding {
+    CRLF,
+    LF
+}
+
+impl LineEnding {
+    fn string(&self) -> &'static str {
+        match self {
+            LineEnding::CRLF => "\r\n",
+            LineEnding::LF => "\n",
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum MediaProp {
     Title(String),
@@ -455,8 +470,8 @@ impl FromStr for SdpProp {
     }
 }
 
-impl ToString for SdpProp {
-    fn to_string(&self) -> String {
+impl SdpProp {
+    fn to_string(&self, ending: LineEnding) -> String {
         // TODO: Cut down on code copying from SDPProp to MediaProp
         match self {
             SdpProp::Version(v) => format!("v={v}"),
@@ -548,12 +563,13 @@ impl ToString for SdpProp {
                         "".to_string()
                     } else {
                         format!(
-                            "\r\n{}",
+                            "{}{}",
+                            ending.string(),
                             props
                                 .iter()
                                 .map(|prop| prop.to_string())
                                 .collect::<Vec<String>>()
-                                .join("\r\n")
+                                .join(ending.string())
                         )
                     }
                 )
@@ -636,13 +652,13 @@ impl FromStr for SDP {
     }
 }
 
-impl ToString for SDP {
-    fn to_string(&self) -> String {
-        format!("{}\r\n", self.props
+impl SDP {
+    pub fn to_string(&self, ending: LineEnding) -> String {
+        format!("{}{}", self.props
             .iter()
-            .map(|prop| prop.to_string())
+            .map(|prop| prop.to_string(ending))
             .collect::<Vec<String>>()
-            .join("\r\n"))
+            .join(ending.string()), ending.string())
     }
 }
 

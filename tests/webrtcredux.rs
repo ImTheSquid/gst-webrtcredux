@@ -6,6 +6,7 @@ use gst::glib::BoolError;
 use gst::prelude::*;
 use gst::{debug_bin_to_dot_data, DebugGraphDetails, Element};
 use indoc::indoc;
+use webrtcredux::sdp::LineEnding;
 use std::string::ToString;
 use strum::IntoEnumIterator;
 use strum_macros::Display;
@@ -255,7 +256,7 @@ fn sdp_serialization() {
 
     let test = SDP { props };
 
-    assert_eq!(test.to_string(), target.replace('\n', "\r\n"));
+    assert_eq!(test.to_string(LineEnding::LF), target);
 }
 
 #[test]
@@ -529,5 +530,5 @@ fn sdp_symmetry() {
 
     assert!(sdp.is_ok());
 
-    assert_eq!(text, sdp.unwrap().to_string());
+    assert_eq!(text, sdp.unwrap().to_string(LineEnding::CRLF));
 }
