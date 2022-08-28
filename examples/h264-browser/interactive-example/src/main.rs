@@ -7,6 +7,7 @@ use tokio::io;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use webrtcredux::{RTCIceConnectionState, RTCSdpType};
 use tokio::runtime::Handle;
+use webrtcredux::sdp::LineEnding::LF;
 
 use webrtcredux::webrtcredux::{
     sdp::{SDP},
@@ -66,6 +67,14 @@ async fn main() -> Result<()> {
 
     let video_encoder = gst::ElementFactory::make("x264enc", None)?;
 
+    video_encoder.set_property("threads", 12u32);
+    video_encoder.set_property("bitrate", 2048000_u32 / 1000);
+    video_encoder.set_property_from_str("tune", "zerolatency");
+    video_encoder.set_property_from_str("speed-preset", "ultrafast");
+    video_encoder.set_property("key-int-max", 2560u32);
+    video_encoder.set_property("b-adapt", false);
+    video_encoder.set_property("vbv-buf-capacity", 120u32);
+
     pipeline.add_many(&[&video_src, &video_encoder])?;
 
     Element::link_many(&[&video_src, &video_encoder])?;
@@ -123,7 +132,7 @@ async fn main() -> Result<()> {
     let _ = gather_complete.recv().await;
 
     if let Ok(Some(local_desc)) = webrtcredux.local_description().await {
-        let b64 = base64::encode(local_desc.to_string());
+        let b64 = base64::encode(local_desc.to_string(LF));
         clipboard_handle.set_contents(b64.clone()).expect("Failed to set clipboard contents");
         println!("Base64 Session Description for the browser copied to the cliboard", );
         println!("{}", b64);
