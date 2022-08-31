@@ -3,15 +3,23 @@ use gst::prelude::*;
 use gst::subclass::prelude::ObjectSubclassExt;
 use gst::ErrorMessage;
 
+mod sender;
+
 mod imp;
 
 pub use imp::*;
+use tokio::runtime::Handle;
+use webrtc::ice_transport::ice_gatherer::OnICEGathererStateChangeHdlrFn;
+use webrtc::ice_transport::ice_gatherer::OnLocalCandidateHdlrFn;
+use webrtc::peer_connection::OnICEConnectionStateChangeHdlrFn;
+use webrtc::peer_connection::OnNegotiationNeededHdlrFn;
+use webrtc::peer_connection::OnPeerConnectionStateChangeHdlrFn;
 
 use self::sdp::SDP;
 pub mod sdp;
 
 glib::wrapper! {
-    pub struct WebRtcRedux(ObjectSubclass<imp::WebRtcRedux>) @extends gst_base::BaseTransform, gst::Element, gst::Object;
+    pub struct WebRtcRedux(ObjectSubclass<imp::WebRtcRedux>) @extends gst::Bin, gst::Element, gst::Object;
 }
 
 impl Default for WebRtcRedux {
@@ -19,6 +27,9 @@ impl Default for WebRtcRedux {
         glib::Object::new(&[]).unwrap()
     }
 }
+
+unsafe impl Send for WebRtcRedux {}
+unsafe impl Sync for WebRtcRedux {}
 
 //TODO: Add signal for those methods for compatibility with other programing languages
 impl WebRtcRedux {
@@ -68,39 +79,38 @@ impl WebRtcRedux {
             .await
     }
 
-    pub async fn on_negotiation_needed<F>(&self, f: F) -> Result<(), ErrorMessage>
-    where
-        F: FnMut() + Send + Sync + 'static,
+    pub async fn on_negotiation_needed(&self, f: OnNegotiationNeededHdlrFn) -> Result<(), ErrorMessage>
     {
         imp::WebRtcRedux::from_instance(self)
             .on_negotiation_needed(f)
             .await
     }
 
-    pub async fn on_ice_candidate<F>(&self, f: F) -> Result<(), ErrorMessage>
-    where
-        F: FnMut(Option<RTCIceCandidate>) + Send + Sync + 'static,
+    pub async fn on_ice_candidate(&self, f: OnLocalCandidateHdlrFn) -> Result<(), ErrorMessage>
     {
         imp::WebRtcRedux::from_instance(self)
             .on_ice_candidate(f)
             .await
     }
 
-    pub async fn on_ice_gathering_state_change<F>(&self, f: F) -> Result<(), ErrorMessage>
-    where
-        F: FnMut(RTCIceGathererState) + Send + Sync + 'static,
+    pub async fn on_ice_gathering_state_change(&self, f: OnICEGathererStateChangeHdlrFn) -> Result<(), ErrorMessage>
     {
         imp::WebRtcRedux::from_instance(self)
             .on_ice_gathering_state_change(f)
             .await
     }
 
-    pub async fn on_ice_connection_state_change<F>(&self, f: F) -> Result<(), ErrorMessage>
-        where
-            F: FnMut(RTCIceConnectionState) + Send + Sync + 'static,
+    pub async fn on_ice_connection_state_change(&self, f: OnICEConnectionStateChangeHdlrFn) -> Result<(), ErrorMessage>
     {
         imp::WebRtcRedux::from_instance(self)
             .on_ice_connection_state_change(f)
+            .await
+    }
+
+    pub async fn on_peer_connection_state_change(&self, f: OnPeerConnectionStateChangeHdlrFn) -> Result<(), ErrorMessage>
+    {
+        imp::WebRtcRedux::from_instance(self)
+            .on_peer_connection_state_change(f)
             .await
     }
 
@@ -112,13 +122,21 @@ impl WebRtcRedux {
             .add_ice_candidate(candidate)
             .await
     }
+
+    pub fn set_tokio_runtime(&self, handle: Handle) {
+        imp::WebRtcRedux::from_instance(self).set_tokio_runtime(handle);
+    }
+
+    pub async fn wait_for_all_tracks(&self) {
+        imp::WebRtcRedux::from_instance(self).wait_for_all_tracks().await;
+    }
 }
 
 pub fn register(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
     gst::Element::register(
         Some(plugin),
         "webrtcredux",
-        gst::Rank::Primary,
+        gst::Rank::None,
         WebRtcRedux::static_type(),
     )
 }

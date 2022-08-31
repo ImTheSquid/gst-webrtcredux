@@ -6,6 +6,7 @@ use gst::glib::BoolError;
 use gst::prelude::*;
 use gst::{debug_bin_to_dot_data, DebugGraphDetails, Element};
 use indoc::indoc;
+use webrtcredux::sdp::LineEnding;
 use std::string::ToString;
 use strum::IntoEnumIterator;
 use strum_macros::Display;
@@ -152,8 +153,6 @@ fn pipeline_creation_test(encoders: Vec<Encoder>) {
         .add(&webrtcredux)
         .expect("Failed to add webrtcredux to the pipeline");
 
-    let mut audio_idx: usize = 0;
-    let mut video_idx: usize = 0;
     for encoder_to_use in &encoders {
         let src = match encoder_to_use {
             Encoder::Audio(_) => gst::ElementFactory::make("audiotestsrc", None).unwrap(),
@@ -168,24 +167,9 @@ fn pipeline_creation_test(encoders: Vec<Encoder>) {
         Element::link_many(&[&src, &encoder, webrtcredux.as_ref()])
             .expect("Failed to link elements");
 
-        match encoder_to_use {
-            Encoder::Audio(_) => {
-                let pad_name = &format!("audio_{}", audio_idx);
-                webrtcredux.set_stream_id(pad_name, pad_name).unwrap();
-                audio_idx += 1;
-            }
-            Encoder::Video(_) => {
-                let pad_name = &format!("video_{}", video_idx);
-                webrtcredux.set_stream_id(pad_name, pad_name).unwrap();
-                video_idx += 1;
-            }
-        }
     }
 
-    assert_eq!(
-        pipeline.set_state(gst::State::Playing).unwrap(),
-        gst::StateChangeSuccess::Success
-    );
+    pipeline.set_state(gst::State::Playing).expect("Failed to set pipeline state");
 
     // Debug diagram
     let out = debug_bin_to_dot_data(&pipeline, DebugGraphDetails::ALL);
@@ -272,7 +256,7 @@ fn sdp_serialization() {
 
     let test = SDP { props };
 
-    assert_eq!(test.to_string(), target.replace('\n', "\r\n"));
+    assert_eq!(test.to_string(LineEnding::LF), target);
 }
 
 #[test]
@@ -546,5 +530,5 @@ fn sdp_symmetry() {
 
     assert!(sdp.is_ok());
 
-    assert_eq!(text, sdp.unwrap().to_string());
+    assert_eq!(text, sdp.unwrap().to_string(LineEnding::CRLF));
 }

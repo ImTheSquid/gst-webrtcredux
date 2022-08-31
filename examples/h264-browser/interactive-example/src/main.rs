@@ -6,6 +6,8 @@ use clipboard::{ClipboardContext, ClipboardProvider};
 use tokio::io;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use webrtcredux::{RTCIceConnectionState, RTCSdpType};
+use tokio::runtime::Handle;
+use webrtcredux::sdp::LineEnding::LF;
 
 use webrtcredux::webrtcredux::{
     sdp::{SDP},
@@ -50,24 +52,36 @@ async fn main() -> Result<()> {
 
     let webrtcredux = WebRtcRedux::default();
 
+    webrtcredux.set_tokio_runtime(Handle::current());
+
     webrtcredux.add_ice_servers(vec![RTCIceServer {
         urls: vec!["stun:stun.comrex.com:3478".to_string()],
         ..Default::default()
     }]);
 
     pipeline
-        .add(&webrtcredux)
+        .add(webrtcredux.upcast_ref::<gst::Element>())
         .expect("Failed to add webrtcredux to the pipeline");
 
     let video_src = gst::ElementFactory::make("videotestsrc", None)?;
 
     let video_encoder = gst::ElementFactory::make("x264enc", None)?;
 
+    video_encoder.set_property("threads", 12u32);
+    video_encoder.set_property("bitrate", 2048000_u32 / 1000);
+    video_encoder.set_property_from_str("tune", "zerolatency");
+    video_encoder.set_property_from_str("speed-preset", "ultrafast");
+    video_encoder.set_property("key-int-max", 2560u32);
+    video_encoder.set_property("b-adapt", false);
+    video_encoder.set_property("vbv-buf-capacity", 120u32);
+
     pipeline.add_many(&[&video_src, &video_encoder])?;
 
-    Element::link_many(&[&video_src, &video_encoder, webrtcredux.as_ref()])?;
+    Element::link_many(&[&video_src, &video_encoder])?;
 
-    webrtcredux.set_stream_id("video_0", "webrtc-rs")?;
+    video_encoder.link(webrtcredux.upcast_ref::<gst::Element>())?;
+
+    //webrtcredux.set_stream_id("video_0", "webrtc-rs")?;
 
     let audio_src = gst::ElementFactory::make("audiotestsrc", None)?;
 
@@ -78,9 +92,11 @@ async fn main() -> Result<()> {
 
     pipeline.add_many(&[&audio_src, &audio_encoder])?;
 
-    Element::link_many(&[&audio_src, &audio_encoder, webrtcredux.as_ref()])?;
+    Element::link_many(&[&audio_src, &audio_encoder])?;
 
-    webrtcredux.set_stream_id("audio_0", "webrtc-rs")?;
+    audio_encoder.link(webrtcredux.upcast_ref::<gst::Element>())?;
+
+    //webrtcredux.set_stream_id("audio_0", "webrtc-rs")?;
 
     let mut clipboard_handle = ClipboardContext::new().expect("Failed to create clipboard context");
 
@@ -92,8 +108,16 @@ async fn main() -> Result<()> {
 
     pipeline.set_state(gst::State::Playing)?;
 
+    webrtcredux.on_peer_connection_state_change(Box::new(|state| {
+        println!("Peer connection state has changed {}", state);
+
+        Box::pin(async {})
+    })).await?;
+
     webrtcredux.on_ice_connection_state_change(Box::new(move |connection_state: RTCIceConnectionState| {
         println!("Connection State has changed {}", connection_state);
+
+        Box::pin(async {})
     }))
         .await?;
 
@@ -108,7 +132,7 @@ async fn main() -> Result<()> {
     let _ = gather_complete.recv().await;
 
     if let Ok(Some(local_desc)) = webrtcredux.local_description().await {
-        let b64 = base64::encode(local_desc.to_string());
+        let b64 = base64::encode(local_desc.to_string(LF));
         clipboard_handle.set_contents(b64.clone()).expect("Failed to set clipboard contents");
         println!("Base64 Session Description for the browser copied to the cliboard", );
         println!("{}", b64);

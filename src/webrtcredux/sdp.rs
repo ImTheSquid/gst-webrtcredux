@@ -4,7 +4,22 @@ use std::{
     str::FromStr,
 };
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
+pub enum LineEnding {
+    CRLF,
+    LF
+}
+
+impl LineEnding {
+    fn string(&self) -> &'static str {
+        match self {
+            LineEnding::CRLF => "\r\n",
+            LineEnding::LF => "\n",
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum MediaProp {
     Title(String),
     Connection {
@@ -126,7 +141,7 @@ impl ToString for MediaProp {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum MediaType {
     Audio,
     Video,
@@ -160,7 +175,7 @@ impl ToString for MediaType {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum NetworkType {
     Internet,
 }
@@ -185,7 +200,7 @@ impl ToString for NetworkType {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum AddressType {
     IPv4,
     IPv6,
@@ -213,7 +228,7 @@ impl ToString for AddressType {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum BandwidthType {
     ConferenceTotal,
     ApplicationSpecific,
@@ -241,13 +256,13 @@ impl ToString for BandwidthType {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct TimeZoneAdjustment {
     time: usize,
     offset: String,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum EncryptionKeyMethod {
     Clear(String),
     Base64(String),
@@ -286,7 +301,7 @@ impl ToString for EncryptionKeyMethod {
 }
 
 // https://datatracker.ietf.org/doc/html/rfc4566#section-2
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum SdpProp {
     Version(u8),
     Origin {
@@ -346,7 +361,6 @@ impl FromStr for SdpProp {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let (key, value) = content_from_line(s)?;
         let tokens = value.split(' ').collect::<Vec<&str>>();
-        println!("Parsing line: {}", s);
 
         // TODO: Cut down on code copying from SDPProp to MediaProp
         match key {
@@ -456,8 +470,8 @@ impl FromStr for SdpProp {
     }
 }
 
-impl ToString for SdpProp {
-    fn to_string(&self) -> String {
+impl SdpProp {
+    fn to_string(&self, ending: LineEnding) -> String {
         // TODO: Cut down on code copying from SDPProp to MediaProp
         match self {
             SdpProp::Version(v) => format!("v={v}"),
@@ -549,12 +563,13 @@ impl ToString for SdpProp {
                         "".to_string()
                     } else {
                         format!(
-                            "\r\n{}",
+                            "{}{}",
+                            ending.string(),
                             props
                                 .iter()
                                 .map(|prop| prop.to_string())
                                 .collect::<Vec<String>>()
-                                .join("\r\n")
+                                .join(ending.string())
                         )
                     }
                 )
@@ -637,13 +652,13 @@ impl FromStr for SDP {
     }
 }
 
-impl ToString for SDP {
-    fn to_string(&self) -> String {
-        format!("{}\r\n", self.props
+impl SDP {
+    pub fn to_string(&self, ending: LineEnding) -> String {
+        format!("{}{}", self.props
             .iter()
-            .map(|prop| prop.to_string())
+            .map(|prop| prop.to_string(ending))
             .collect::<Vec<String>>()
-            .join("\r\n"))
+            .join(ending.string()), ending.string())
     }
 }
 

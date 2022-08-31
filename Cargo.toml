@@ -1,6 +1,6 @@
 [package]
 name = "gst-plugin-webrtcredux"
-version = "0.1.0"
+version = "0.2.1"
 edition = "2021"
 repository = "https://github.com/ImTheSquid/gst-webrtcredux"
 homepage = "https://github.com/ImTheSquid/gst-webrtcredux"
@@ -10,6 +10,11 @@ description = "A revived version of GStreamer's webrtcbin plugin built for moder
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+# gst = { git="https://gitlab.freedesktop.org/gstreamer/gstreamer-rs", package = "gstreamer", features = ["v1_16"] }
+# gst-app = { git="https://gitlab.freedesktop.org/gstreamer/gstreamer-rs", package = "gstreamer-app", features = ["v1_16"] }
+# gst-base = { git="https://gitlab.freedesktop.org/gstreamer/gstreamer-rs", package = "gstreamer-base", features = ["v1_16"] }
+# gst-video = { git="https://gitlab.freedesktop.org/gstreamer/gstreamer-rs", package = "gstreamer-video", features = ["v1_16"] }
+# gst-audio = { git="https://gitlab.freedesktop.org/gstreamer/gstreamer-rs", package = "gstreamer-audio", features = ["v1_16"] }
 gst = { package = "gstreamer", version = "0.18.0", features = ["v1_16"] }
 gst-app = { package = "gstreamer-app", version = "0.18.7", features = ["v1_16"] }
 gst-base = { package = "gstreamer-base", version = "0.18.0", features = ["v1_16"] }

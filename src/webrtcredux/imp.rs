@@ -1,49 +1,48 @@
 use std::collections::HashMap;
-use std::future::Future;
+use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::{Duration, Instant};
+use futures::Future;
+use futures::executor::block_on;
+use tokio::sync::{Mutex as AsyncMutex, oneshot};
 
-use bytes::Bytes;
-use futures::future;
+use anyhow::{Context, Error};
 use gst::{
     gst_debug as debug,
     gst_error as error,
     gst_info as info,
-    gst_trace as trace,
     gst_fixme as fixme,
-    glib,
-    prelude::PadExtManual,
-    traits::{ElementExt, GstObjectExt},
-    ErrorMessage,
+    EventView, EventRef
 };
-use gst_base::subclass::prelude::*;
+use gst::{ErrorMessage, glib, prelude::*, traits::{ElementExt, GstObjectExt}};
+use gst_video::subclass::prelude::*;
 use interceptor::registry::Registry;
 use once_cell::sync::Lazy;
 use strum_macros::EnumString;
-use tokio::runtime;
+use tokio::runtime::{self, Handle};
+use webrtc::api::{API, APIBuilder};
 use webrtc::api::interceptor_registry::register_default_interceptors;
-use webrtc::api::media_engine::{MediaEngine, MIME_TYPE_H264, MIME_TYPE_OPUS, MIME_TYPE_G722, MIME_TYPE_VP8, MIME_TYPE_VP9, MIME_TYPE_PCMU, MIME_TYPE_PCMA};
-use webrtc::api::{APIBuilder, API};
+use webrtc::api::media_engine::{MediaEngine, MIME_TYPE_G722, MIME_TYPE_H264, MIME_TYPE_OPUS, MIME_TYPE_PCMA, MIME_TYPE_PCMU, MIME_TYPE_VP8, MIME_TYPE_VP9};
 pub use webrtc::ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit};
 pub use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
+use webrtc::ice_transport::ice_gatherer::{OnLocalCandidateHdlrFn, OnICEGathererStateChangeHdlrFn};
 pub use webrtc::ice_transport::ice_gatherer_state::RTCIceGathererState;
 pub use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 pub use webrtc::peer_connection::offer_answer_options::RTCAnswerOptions;
 pub use webrtc::peer_connection::offer_answer_options::RTCOfferOptions;
+use webrtc::peer_connection::{RTCPeerConnection, OnNegotiationNeededHdlrFn, OnICEConnectionStateChangeHdlrFn, OnPeerConnectionStateChangeHdlrFn};
 pub use webrtc::peer_connection::sdp::sdp_type::RTCSdpType;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
-use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::track::track_local::TrackLocal;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
-use webrtc_media::Sample;
+use crate::sdp::LineEnding;
+use crate::webrtcredux::sender::WebRtcReduxSender;
 
 use super::sdp::SDP;
 
-static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
+pub static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
     gst::DebugCategory::new(
         "webrtcredux",
         gst::DebugColorFlags::empty(),
@@ -58,12 +57,14 @@ static RUNTIME: Lazy<runtime::Runtime> = Lazy::new(|| {
         .unwrap()
 });
 
+pub type OnAllTracksAddedFn = Box<dyn FnMut() -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> + Send + Sync>;
+
 #[derive(Debug, PartialEq, Eq, EnumString, Clone, Copy)]
 enum MediaType {
     #[strum(
-        ascii_case_insensitive,
-        serialize = "video/H264",
-        serialize = "video/x-h264"
+    ascii_case_insensitive,
+    serialize = "video/H264",
+    serialize = "video/x-h264"
     )]
     H264,
     #[strum(ascii_case_insensitive, serialize = "video/x-vp8")]
@@ -71,23 +72,23 @@ enum MediaType {
     #[strum(ascii_case_insensitive, serialize = "video/x-vp9")]
     VP9,
     #[strum(
-        ascii_case_insensitive,
-        serialize = "audio/opus",
-        serialize = "audio/x-opus"
+    ascii_case_insensitive,
+    serialize = "audio/opus",
+    serialize = "audio/x-opus"
     )]
     Opus,
     #[strum(ascii_case_insensitive, serialize = "audio/G722")]
     G722,
     #[strum(
-        ascii_case_insensitive,
-        serialize = "audio/PCMU",
-        serialize = "audio/x-mulaw"
+    ascii_case_insensitive,
+    serialize = "audio/PCMU",
+    serialize = "audio/x-mulaw"
     )]
     Mulaw,
     #[strum(
-        ascii_case_insensitive,
-        serialize = "audio/PCMA",
-        serialize = "audio/x-alaw"
+    ascii_case_insensitive,
+    serialize = "audio/PCMA",
+    serialize = "audio/x-alaw"
     )]
     Alaw,
 }
@@ -106,44 +107,80 @@ impl MediaType {
     }
 }
 
-#[derive(Clone)]
-enum MediaState {
-    NotConfigured,
-    IdConfigured(String),
-    Configured { track: Arc<TrackLocalStaticSample>, duration: Duration },
+#[derive(Debug, Clone)]
+struct InputStream {
+    sink_pad: gst::GhostPad,
+    sender: Option<WebRtcReduxSender>,
 }
 
-impl MediaState {
-    fn add_id(&self, new_id: &str) -> Self {
-        match self {
-            MediaState::NotConfigured => MediaState::IdConfigured(new_id.to_string()),
-            MediaState::IdConfigured(_) => MediaState::IdConfigured(new_id.to_string()),
-            MediaState::Configured { .. } => self.to_owned(),
-        }
+pub fn make_element(element: &str, name: Option<&str>) -> Result<gst::Element, Error> {
+    gst::ElementFactory::make(element, name)
+        .with_context(|| format!("Failed to make element {}", element))
+}
+
+impl InputStream {
+    fn prepare(&mut self, element: &super::WebRtcRedux) -> Result<(), Error> {
+        let sender = WebRtcReduxSender::default();
+
+        element.add(&sender).expect("Failed to add sender element");
+
+        element
+            .sync_children_states()
+            .with_context(|| format!("Linking input stream {}", self.sink_pad.name()))?;
+
+        self.sink_pad
+            .set_target(Some(&sender.static_pad("sink").unwrap()))
+            .unwrap();
+
+        self.sender = Some(sender);
+
+        Ok(())
     }
 
-    /*fn add_track(&self, track: Arc<TrackLocalStaticSample>, duration: Duration) -> Self {
-        match self {
-            MediaState::NotConfigured => unreachable!("Shouldn't be able to set track without ID"),
-            _ => MediaState::Configured {
-                track,
-                duration,
-            }
+    fn unprepare(&mut self, element: &super::WebRtcRedux) {
+        self.sink_pad.set_target(None::<&gst::Pad>).unwrap();
+
+        if let Some(sender) = self.sender.take() {
+            element.remove(&sender).unwrap();
+            sender.set_state(gst::State::Null).unwrap();
         }
-    }*/
+    }
 }
 
 struct WebRtcState {
     api: API,
-    peer_connection: Option<RTCPeerConnection>,
+    peer_connection: Option<RTCPeerConnection>
+}
+
+impl Default for WebRtcState {
+    fn default() -> Self {
+        let mut media_engine = MediaEngine::default();
+        media_engine.register_default_codecs().expect("Failed to register default codecs");
+        let mut registry = Registry::new();
+        registry = register_default_interceptors(registry, &mut media_engine)
+            .expect("Failed to register default interceptors");
+
+        WebRtcState {
+            api: APIBuilder::new()
+                .with_media_engine(media_engine)
+                .with_interceptor_registry(registry)
+                .build(),
+            peer_connection: Default::default()
+        }
+    }
 }
 
 #[derive(Default)]
 struct State {
-    video_state: HashMap<usize, MediaState>,
+    video_state: HashMap<usize, String>,
     next_video_pad_id: usize,
-    audio_state: HashMap<usize, MediaState>,
+    audio_state: HashMap<usize, String>,
     next_audio_pad_id: usize,
+    streams: HashMap<String, InputStream>,
+    handle: Option<Handle>,
+    on_all_tracks_added_send: Option<oneshot::Sender<()>>,
+    on_all_tracks_added: Option<oneshot::Receiver<()>>,
+    tracks: usize
 }
 
 struct WebRtcSettings {
@@ -158,26 +195,39 @@ impl Default for WebRtcSettings {
     }
 }
 
-struct GenericSettings {
-    timeout: u16,
-}
-
-impl Default for GenericSettings {
-    fn default() -> Self {
-        Self { timeout: 15 }
-    }
-}
-
 #[derive(Default)]
 pub struct WebRtcRedux {
-    state: Arc<Mutex<Option<State>>>,
-    webrtc_state: Arc<Mutex<Option<WebRtcState>>>,
-    settings: Arc<Mutex<GenericSettings>>,
-    webrtc_settings: Arc<Mutex<WebRtcSettings>>,
-    canceller: Mutex<Option<future::AbortHandle>>,
+    state: Mutex<State>,
+    webrtc_state: Arc<AsyncMutex<WebRtcState>>,
+    webrtc_settings: Mutex<WebRtcSettings>,
 }
 
 impl WebRtcRedux {
+    fn prepare(&self, element: &super::WebRtcRedux) -> Result<(), Error> {
+        debug!(CAT, obj: element, "preparing");
+
+        self.state
+            .lock()
+            .unwrap()
+            .streams
+            .iter_mut()
+            .try_for_each(|(_, stream)| stream.prepare(element))?;
+
+        Ok(())
+    }
+
+    fn unprepare(&self, element: &super::WebRtcRedux) -> Result<(), Error> {
+        info!(CAT, obj: element, "unpreparing");
+
+        let mut state = self.state.lock().unwrap();
+
+        state
+            .streams
+            .iter_mut()
+            .for_each(|(_, stream)| stream.unprepare(element));
+        Ok(())
+    }
+
     pub fn add_ice_servers(&self, mut ice_server: Vec<RTCIceServer>) {
         let mut webrtc_settings = self.webrtc_settings.lock().unwrap();
 
@@ -191,54 +241,95 @@ impl WebRtcRedux {
         }
     }
 
-    fn wait<F, T>(&self, future: F) -> Result<T, Option<ErrorMessage>>
-    where
-        F: Send + Future<Output = Result<T, ErrorMessage>>,
-        T: Send + 'static,
-    {
-        let timeout = self.settings.lock().unwrap().timeout;
+    fn sink_event(&self, pad: &gst::Pad, element: &super::WebRtcRedux, event: gst::Event) -> bool {
+        match event.view() {
+            EventView::Caps(caps) => {
+                self.create_track(&pad.name(), &caps);
+                pad.event_default(Some(element), event)
+            },
+            _ => pad.event_default(Some(element), event)
+        }
+    }
 
-        let mut canceller = self.canceller.lock().unwrap();
-        let (abort_handle, abort_registration) = future::AbortHandle::new_pair();
-        canceller.replace(abort_handle);
-        drop(canceller);
+    fn create_track(&self, name: &str, caps: &gst::event::Caps<&EventRef>) {
+        let name_parts = name.split('_').collect::<Vec<_>>();
+        let id: usize = name_parts[1].parse().unwrap();
 
-        // Wrap in a timeout
-        let future = async {
-            if timeout == 0 {
-                future.await
+        let caps = caps.structure().unwrap().get::<gst::Caps>("caps").unwrap();
+        let structure = caps.structure(0).unwrap();
+        let mime = structure.name();
+        let duration = if name.starts_with("video") {
+            let framerate = structure.get::<gst::Fraction>("framerate").unwrap().0;
+            Some(gst::ClockTime::from_mseconds(((*framerate.denom() as f64 / *framerate.numer() as f64)  * 1000.0).round() as u64))
+        } else {
+            None
+        };
+
+        // TODO: Clean up
+        let stream_id = if name.starts_with("video") {
+            let state = self.state.lock().unwrap();
+            let value = state.video_state.get(&id);
+            if let Some(value) = value {
+                value.to_owned()
             } else {
-                let res =
-                    tokio::time::timeout(std::time::Duration::from_secs(timeout.into()), future)
-                        .await;
-
-                match res {
-                    Ok(res) => res,
-                    Err(_) => Err(gst::error_msg!(
-                        gst::ResourceError::Read,
-                        ["Request timeout"]
-                    )),
-                }
+                fixme!(CAT, "Using pad name as stream_id for video pad {}, consider setting before pipeline starts", name);
+                format!("video_{}", id)
+            }
+        } else {
+            let state = self.state.lock().unwrap();
+            let value = state.audio_state.get(&id);
+            if let Some(value) = value {
+                value.to_owned()
+            } else {
+                fixme!(CAT, "Using pad name as stream_id for video pad {}, consider setting before pipeline starts", name);
+                format!("audio_{}", id)
             }
         };
 
-        // And make abortable
-        let future = async {
-            match future::Abortable::new(future, abort_registration).await {
-                Ok(res) => res.map_err(Some),
-                Err(_) => Err(None),
+        let track  = Arc::new(TrackLocalStaticSample::new(
+            RTCRtpCodecCapability {
+                mime_type: MediaType::from_str(mime).expect("Failed to parse mime type").webrtc_mime().to_string(),
+                ..RTCRtpCodecCapability::default()
+            }, 
+            name_parts[0].to_string(), 
+            stream_id
+        ));
+
+        let webrtc_state = self.webrtc_state.clone();
+        let track_arc = track.clone();
+        let handle = self.runtime_handle();
+        let inner = handle.clone();
+        let rtp_sender = block_on(async move {
+            handle.spawn_blocking(move || {
+                inner.block_on(async move {
+                    webrtc_state.lock().await.peer_connection.as_ref().unwrap().add_track(Arc::clone(&track_arc) as Arc<dyn TrackLocal + Send + Sync>).await
+                })
+            }).await
+        }).unwrap().unwrap();
+
+        self.runtime_handle().spawn(async move {
+            let mut rtcp_buf = vec![0u8; 1500];
+            while let Ok((_, _)) = rtp_sender.read(&mut rtcp_buf).await {}
+            anyhow::Result::<()>::Ok(())
+        });
+
+        let media_type = match name_parts[0] {
+            "video" => crate::webrtcredux::sender::MediaType::Video,
+            "audio" => crate::webrtcredux::sender::MediaType::Audio,
+            _ => unreachable!()
+        };
+
+        // Moving this out of the add_info call fixed a lockup, I'm not gonna question why
+        let handle = self.runtime_handle();
+        self.state.lock().unwrap().streams.get(name).unwrap().sender.as_ref().unwrap().add_info(track, handle, media_type, duration);
+
+        self.state.lock().unwrap().tracks += 1;
+        {
+            let mut state = self.state.lock().unwrap();
+            if state.tracks == state.next_audio_pad_id + state.next_video_pad_id {
+                state.on_all_tracks_added_send.take().unwrap().send(()).unwrap();
             }
-        };
-
-        let res = {
-            let _enter = RUNTIME.enter();
-            futures::executor::block_on(future)
-        };
-
-        /* Clear out the canceller */
-        let _ = self.canceller.lock().unwrap().take();
-
-        res
+        }
     }
 
     pub fn set_stream_id(&self, pad_name: &str, stream_id: &str) -> Result<(), ErrorMessage> {
@@ -256,7 +347,7 @@ impl WebRtcRedux {
                 return Err(gst::error_msg!(
                     gst::ResourceError::NotFound,
                     [&format!("Couldn't parse '{}' into number", split[1])]
-                ))
+                ));
             }
         };
 
@@ -266,8 +357,6 @@ impl WebRtcRedux {
                     .state
                     .lock()
                     .unwrap()
-                    .as_ref()
-                    .unwrap()
                     .video_state
                     .contains_key(&id)
                 {
@@ -277,24 +366,9 @@ impl WebRtcRedux {
                     ));
                 }
 
-                let current = {
-                    let state = self.state.lock().unwrap();
-                    state
-                        .as_ref()
-                        .unwrap()
-                        .video_state
-                        .get(&id)
-                        .unwrap()
-                        .to_owned()
-                };
-
-                self.state
-                    .lock()
-                    .unwrap()
-                    .as_mut()
-                    .unwrap()
+                self.state.lock().unwrap()
                     .video_state
-                    .insert(id, current.add_id(stream_id));
+                    .insert(id, stream_id.to_string());
 
                 Ok(())
             }
@@ -303,8 +377,6 @@ impl WebRtcRedux {
                     .state
                     .lock()
                     .unwrap()
-                    .as_ref()
-                    .unwrap()
                     .audio_state
                     .contains_key(&id)
                 {
@@ -314,24 +386,11 @@ impl WebRtcRedux {
                     ));
                 }
 
-                let current = {
-                    let state = self.state.lock().unwrap();
-                    state
-                        .as_ref()
-                        .unwrap()
-                        .audio_state
-                        .get(&id)
-                        .unwrap()
-                        .to_owned()
-                };
-
                 self.state
                     .lock()
                     .unwrap()
-                    .as_mut()
-                    .unwrap()
                     .audio_state
-                    .insert(id, current.add_id(stream_id));
+                    .insert(id, stream_id.to_string());
 
                 Ok(())
             }
@@ -343,8 +402,8 @@ impl WebRtcRedux {
     }
 
     pub async fn gathering_complete_promise(&self) -> Result<tokio::sync::mpsc::Receiver<()>, ErrorMessage> {
-        let webrtc_state = self.webrtc_state.lock().unwrap();
-        let peer_connection = WebRtcRedux::get_peer_connection(webrtc_state.as_ref().unwrap())?;
+        let webrtc_state = self.webrtc_state.lock().await;
+        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         Ok(peer_connection.gathering_complete_promise().await)
     }
@@ -353,8 +412,8 @@ impl WebRtcRedux {
         &self,
         options: Option<RTCOfferOptions>,
     ) -> Result<SDP, ErrorMessage> {
-        let webrtc_state = self.webrtc_state.lock().unwrap();
-        let peer_connection = WebRtcRedux::get_peer_connection(webrtc_state.as_ref().unwrap())?;
+        let webrtc_state = self.webrtc_state.lock().await;
+        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         match peer_connection.create_offer(options).await {
             Ok(res) => Ok(SDP::from_str(&res.sdp).unwrap()),
@@ -367,10 +426,10 @@ impl WebRtcRedux {
 
     pub async fn create_answer(
         &self,
-        options: Option<RTCAnswerOptions>
+        options: Option<RTCAnswerOptions>,
     ) -> Result<SDP, ErrorMessage> {
-        let webrtc_state = self.webrtc_state.lock().unwrap();
-        let peer_connection = WebRtcRedux::get_peer_connection(webrtc_state.as_ref().unwrap())?;
+        let webrtc_state = self.webrtc_state.lock().await;
+        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         match peer_connection.create_answer(options).await {
             Ok(res) => Ok(SDP::from_str(&res.sdp).unwrap()),
@@ -382,8 +441,8 @@ impl WebRtcRedux {
     }
 
     pub async fn local_description(&self) -> Result<Option<SDP>, ErrorMessage> {
-        let webrtc_state = self.webrtc_state.lock().unwrap();
-        let peer_connection = WebRtcRedux::get_peer_connection(webrtc_state.as_ref().unwrap())?;
+        let webrtc_state = self.webrtc_state.lock().await;
+        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         match peer_connection.local_description().await {
             None => Ok(None),
@@ -392,11 +451,11 @@ impl WebRtcRedux {
     }
 
     pub async fn set_local_description(&self, sdp: &SDP, sdp_type: RTCSdpType) -> Result<(), ErrorMessage> {
-        let webrtc_state = self.webrtc_state.lock().unwrap();
-        let peer_connection = WebRtcRedux::get_peer_connection(webrtc_state.as_ref().unwrap())?;
+        let webrtc_state = self.webrtc_state.lock().await;
+        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         let mut default = RTCSessionDescription::default();
-        default.sdp = sdp.to_string();
+        default.sdp = sdp.to_string(LineEnding::CRLF);
         default.sdp_type = sdp_type;
 
         if let Err(e) = peer_connection.set_local_description(default).await {
@@ -410,86 +469,77 @@ impl WebRtcRedux {
     }
 
     pub async fn set_remote_description(&self, sdp: &SDP, sdp_type: RTCSdpType) -> Result<(), ErrorMessage> {
-        let webrtc_state = self.webrtc_state.lock().unwrap();
-        let peer_connection = WebRtcRedux::get_peer_connection(webrtc_state.as_ref().unwrap())?;
+        let webrtc_state = self.webrtc_state.lock().await;
+        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         let mut default = RTCSessionDescription::default();
-        default.sdp = sdp.to_string();
+        default.sdp = sdp.to_string(LineEnding::CRLF);
         default.sdp_type = sdp_type;
 
         if let Err(e) = peer_connection.set_remote_description(default).await {
             return Err(gst::error_msg!(
                 gst::ResourceError::Failed,
-                [&format!("Failed to set local description: {:?}", e)]
+                [&format!("Failed to set remote description: {:?}", e)]
             ));
         }
 
         Ok(())
     }
 
-    pub async fn on_negotiation_needed<F>(&self, mut f: F) -> Result<(), ErrorMessage>
-    where
-        F: FnMut() + Send + Sync + 'static,
+    pub async fn on_negotiation_needed(&self, f: OnNegotiationNeededHdlrFn) -> Result<(), ErrorMessage>
     {
-        let webrtc_state = self.webrtc_state.lock().unwrap();
-        let peer_connection = WebRtcRedux::get_peer_connection(webrtc_state.as_ref().unwrap())?;
+        let webrtc_state = self.webrtc_state.lock().await;
+        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         peer_connection
-            .on_negotiation_needed(Box::new(move || {
-                f();
-                Box::pin(async {})
-            }))
+            .on_negotiation_needed(Box::new(f))
             .await;
 
         Ok(())
     }
 
-    pub async fn on_ice_candidate<F>(&self, mut f: F) -> Result<(), ErrorMessage>
-    where
-        F: FnMut(Option<RTCIceCandidate>) + Send + Sync + 'static,
+    pub async fn on_ice_candidate(&self, f: OnLocalCandidateHdlrFn) -> Result<(), ErrorMessage>
     {
-        let webrtc_state = self.webrtc_state.lock().unwrap();
-        let peer_connection = WebRtcRedux::get_peer_connection(webrtc_state.as_ref().unwrap())?;
+        let webrtc_state = self.webrtc_state.lock().await;
+        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         peer_connection
-            .on_ice_candidate(Box::new(move |candidate| {
-                f(candidate);
-                Box::pin(async {})
-            }))
+            .on_ice_candidate(Box::new(f))
             .await;
 
         Ok(())
     }
 
-    pub async fn on_ice_gathering_state_change<F>(&self, mut f: F) -> Result<(), ErrorMessage>
-    where
-        F: FnMut(RTCIceGathererState) + Send + Sync + 'static,
+    pub async fn on_ice_gathering_state_change(&self, f: OnICEGathererStateChangeHdlrFn) -> Result<(), ErrorMessage>
     {
-        let webrtc_state = self.webrtc_state.lock().unwrap();
-        let peer_connection = WebRtcRedux::get_peer_connection(webrtc_state.as_ref().unwrap())?;
+        let webrtc_state = self.webrtc_state.lock().await;
+        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         peer_connection
-            .on_ice_gathering_state_change(Box::new(move |state| {
-                f(state);
-                Box::pin(async {})
-            }))
+            .on_ice_gathering_state_change(Box::new(f))
             .await;
 
         Ok(())
     }
 
-    pub async fn on_ice_connection_state_change<F>(&self, mut f: F) -> Result<(), ErrorMessage>
-    where
-        F: FnMut(RTCIceConnectionState) + Send + Sync + 'static,
+    pub async fn on_ice_connection_state_change(&self, f: OnICEConnectionStateChangeHdlrFn) -> Result<(), ErrorMessage>
     {
-        let webrtc_state = self.webrtc_state.lock().unwrap();
-        let peer_connection = WebRtcRedux::get_peer_connection(webrtc_state.as_ref().unwrap())?;
+        let webrtc_state = self.webrtc_state.lock().await;
+        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         peer_connection
-            .on_ice_connection_state_change(Box::new(move |state| {
-                f(state);
-                Box::pin(async {})
-            }))
+            .on_ice_connection_state_change(Box::new(f))
+            .await;
+
+        Ok(())
+    }
+
+    pub async fn on_peer_connection_state_change(&self, f: OnPeerConnectionStateChangeHdlrFn) -> Result<(), ErrorMessage> {
+        let webrtc_state = self.webrtc_state.lock().await;
+        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
+
+        peer_connection
+            .on_peer_connection_state_change(Box::new(f))
             .await;
 
         Ok(())
@@ -499,8 +549,8 @@ impl WebRtcRedux {
         &self,
         candidate: RTCIceCandidateInit,
     ) -> Result<(), ErrorMessage> {
-        let webrtc_state = self.webrtc_state.lock().unwrap();
-        let peer_connection = WebRtcRedux::get_peer_connection(webrtc_state.as_ref().unwrap())?;
+        let webrtc_state = self.webrtc_state.lock().await;
+        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         if let Err(e) = peer_connection.add_ice_candidate(candidate).await {
             return Err(gst::error_msg!(
@@ -510,6 +560,22 @@ impl WebRtcRedux {
         }
 
         Ok(())
+    }
+
+    pub fn set_tokio_runtime(
+        &self,
+        handle: Handle
+    ) {
+        let _ = self.state.lock().unwrap().handle.insert(handle);
+    }
+
+    pub async fn wait_for_all_tracks(&self) {
+        let all = self.state.lock().unwrap().on_all_tracks_added.take().unwrap();
+        all.await.unwrap();
+    }
+
+    fn runtime_handle(&self) -> Handle {
+        self.state.lock().unwrap().handle.as_ref().unwrap_or(RUNTIME.handle()).clone()
     }
 
     fn get_peer_connection(state: &WebRtcState) -> Result<&RTCPeerConnection, ErrorMessage> {
@@ -529,41 +595,8 @@ impl WebRtcRedux {
 impl ObjectSubclass for WebRtcRedux {
     const NAME: &'static str = "WebRtcRedux";
     type Type = super::WebRtcRedux;
-    type ParentType = gst_base::BaseSink;
-
-    fn with_class(_klass: &Self::Class) -> Self {
-        let mut media_engine = MediaEngine::default();
-        media_engine.register_default_codecs().expect("Failed to register default codecs");
-        let mut registry = Registry::new();
-        registry = register_default_interceptors(registry, &mut media_engine)
-            .expect("Failed to register default interceptors");
-        let api = APIBuilder::new()
-            .with_media_engine(media_engine)
-            .with_interceptor_registry(registry)
-            .build();
-
-        let webrtc_state = Arc::new(Mutex::new(Some(WebRtcState {
-            api,
-            peer_connection: None,
-        })));
-
-        let state = Arc::new(Mutex::new(Some(State::default())));
-
-        let settings = Arc::new(Mutex::new(Default::default()));
-
-        let webrtc_settings = Arc::new(Mutex::new(Default::default()));
-
-        Self {
-            state,
-            webrtc_state,
-            settings,
-            webrtc_settings,
-            canceller: Mutex::new(None),
-        }
-    }
+    type ParentType = gst::Bin;
 }
-
-impl ObjectImpl for WebRtcRedux {}
 
 impl ElementImpl for WebRtcRedux {
     fn metadata() -> Option<&'static gst::subclass::ElementMetadata> {
@@ -572,7 +605,7 @@ impl ElementImpl for WebRtcRedux {
                 "WebRTC Broadcast Engine",
                 "Sink/Video/Audio",
                 "Broadcasts encoded video and audio",
-                "Jack Hogan",
+                "Jack Hogan; Lorenzo Rizzotti <dev@dreaming.codes>",
             )
         });
 
@@ -581,41 +614,34 @@ impl ElementImpl for WebRtcRedux {
 
     fn pad_templates() -> &'static [gst::PadTemplate] {
         static PAD_TEMPLATES: Lazy<Vec<gst::PadTemplate>> = Lazy::new(|| {
-            //MIME_TYPE_H264
-            let mut video_caps = gst::Caps::new_simple("video/x-h264", &[]);
-            let video_caps = video_caps.get_mut().unwrap();
-            //MIME_TYPE_VP8
-            video_caps.append(gst::Caps::new_simple("video/x-vp8", &[]));
-            //MIME_TYPE_VP9
-            video_caps.append(gst::Caps::new_simple("video/x-vp9", &[]));
-
-            let video_sink = gst::PadTemplate::new(
+            let caps = gst::Caps::builder_full()
+                .structure(gst::Structure::builder("video/x-h264").field("stream-format", "byte-stream").field("profile", "baseline").build())
+                .structure(gst::Structure::builder("video/x-vp8").build())
+                .structure(gst::Structure::builder("video/x-vp9").build())
+                .build();
+            let video_pad_template = gst::PadTemplate::new(
                 "video_%u",
                 gst::PadDirection::Sink,
                 gst::PadPresence::Request,
-                &video_caps.to_owned(),
+                &caps,
             )
-            .unwrap();
+                .unwrap();
 
-            //MIME_TYPE_OPUS
-            let mut audio_caps = gst::Caps::new_simple("audio/x-opus", &[]);
-            let audio_caps = audio_caps.get_mut().unwrap();
-            //MIME_TYPE_G722
-            audio_caps.append(gst::Caps::new_simple("audio/G722", &[]));
-            //MIME_TYPE_PCMU
-            audio_caps.append(gst::Caps::new_simple("audio/x-mulaw", &[]));
-            //MIME_TYPE_PCMA
-            audio_caps.append(gst::Caps::new_simple("audio/x-alaw", &[]));
-
-            let audio_sink = gst::PadTemplate::new(
+            let caps = gst::Caps::builder_full()
+                .structure(gst::Structure::builder("audio/x-opus").build())
+                .structure(gst::Structure::builder("audio/G722").build())
+                .structure(gst::Structure::builder("audio/x-mulaw").build())
+                .structure(gst::Structure::builder("audio/x-alaw").build())
+                .build();
+            let audio_pad_template = gst::PadTemplate::new(
                 "audio_%u",
                 gst::PadDirection::Sink,
                 gst::PadPresence::Request,
-                &audio_caps.to_owned(),
+                &caps,
             )
-            .unwrap();
+                .unwrap();
 
-            vec![video_sink, audio_sink]
+            vec![video_pad_template, audio_pad_template]
         });
 
         PAD_TEMPLATES.as_ref()
@@ -628,350 +654,160 @@ impl ElementImpl for WebRtcRedux {
         _name: Option<String>,
         _caps: Option<&gst::Caps>,
     ) -> Option<gst::Pad> {
+        //
+        if element.current_state() > gst::State::Ready {
+            error!(CAT, "element pads can only be requested before starting");
+            return None;
+        }
+
         let mut state = self.state.lock().unwrap();
-        let state = state.as_mut().unwrap();
 
-        // Set up audio and video pads along with callbacks for events and data
-        match templ.name_template().unwrap().as_str() {
-            "video_%u" => {
-                let pad = gst::Pad::from_template(
-                    templ,
-                    Some(&format!("video_{}", state.next_video_pad_id)),
-                );
-                unsafe {
-                    let id = state.next_video_pad_id;
-                    let state = self.state.clone();
-                    let webrtc_state = self.webrtc_state.clone();
-                    pad.set_event_function(move |_pad, _parent, event| {
-                        let structure = event.structure().unwrap();
-                        if structure.name() == "GstEventCaps" {
-                            let structure = structure
-                                .get::<gst::Caps>("caps")
-                                .unwrap();
-
-                            let structure = structure.structure(0).unwrap();
-
-                            let mime = structure.name();
-
-                            let framerate = structure.get::<gst::Fraction>("framerate").unwrap().0;
-                            let duration = Duration::from_millis(((*framerate.denom() as f64 / *framerate.numer() as f64)  * 1000.0).round() as u64);
-
-                            let stream_id = match {
-                                let state = state.lock().unwrap();
-                                state
-                                    .as_ref()
-                                    .unwrap()
-                                    .video_state
-                                    .get(&id)
-                                    .unwrap()
-                                    .to_owned()
-                            } {
-                                MediaState::IdConfigured(id) => id,
-                                _ => unreachable!()
-                            };
-
-                            let track = Arc::new(TrackLocalStaticSample::new(
-                                RTCRtpCodecCapability { 
-                                    mime_type: MediaType::from_str(mime).expect("Failed to parse mime type").webrtc_mime().to_string(),
-                                    ..Default::default()
-                                }, 
-                                "video".to_string(), 
-                                stream_id
-                            ));
-
-                            // Add track to connection
-                            let webrtc_state = webrtc_state.clone();
-                            let video = track.clone();
-                            let rtp_sender = RUNTIME.block_on(async move {
-                                webrtc_state.lock().unwrap().as_ref().unwrap().peer_connection.as_ref().unwrap().add_track(Arc::clone(&video) as Arc<dyn TrackLocal + Send + Sync>).await
-                            }).expect("Failed to add track");
-
-                            thread::spawn(move || {
-                                RUNTIME.block_on(async move {
-                                    let mut rtcp_buf = vec![0u8; 1500];
-                                    while let Ok((_, _)) = rtp_sender.read(&mut rtcp_buf).await {}
-                                    anyhow::Result::<()>::Ok(())
-                                })
-                            });
-                            
-                            state.lock().unwrap().as_mut().unwrap().video_state.insert(
-                                id,
-                                MediaState::Configured { track, duration },
-                            );
-
-                            debug!(CAT, "Video media type set to: {}", mime);
-                        }
-                        true
-                    });
-
-                    let chain_state = self.state.clone();
-                    let last_sample_timestamp: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
-                    pad.set_chain_function(move |_pad, _parent, buffer| {
-                        let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
-                        trace!(CAT, "Video map size: {}", map.size());
-                        let chain_state = chain_state.lock().unwrap();
-                        let (track, duration) = match chain_state.as_ref().unwrap().video_state.get(&id).unwrap() {
-                            MediaState::Configured { track, duration} => (track, duration.to_owned()),
-                            _ => return Ok(gst::FlowSuccess::Ok)
-                        };
-
-                        let diff_duration = if let Some(last) = last_sample_timestamp.lock().unwrap().as_ref() {
-                            Instant::now() - *last
-                        } else {
-                            Duration::from_millis(0)
-                        };
-
-                        RUNTIME.block_on(async move {
-                            track.write_sample(&Sample {
-                                data: Bytes::copy_from_slice(map.as_slice()),
-                                duration: Duration::from_millis((duration.as_millis() * diff_duration.as_millis()).try_into().unwrap()),
-                                ..Sample::default()
-                            }).await
-                        }).expect("Failed to write sample");
-
-                        let _ = last_sample_timestamp.lock().unwrap().insert(Instant::now());
-
-                        Ok(gst::FlowSuccess::Ok)
-                    });
-                }
-                element.add_pad(&pad).unwrap();
-
-                state
-                    .video_state
-                    .insert(state.next_video_pad_id, MediaState::NotConfigured);
-                state.next_video_pad_id += 1;
-
-                Some(pad)
-            }
-            "audio_%u" => {
-                let pad = gst::Pad::from_template(
-                    templ,
-                    Some(&format!("audio_{}", state.next_audio_pad_id)),
-                );
-                unsafe {
-                    let id = state.next_audio_pad_id;
-                    let state = self.state.clone();
-                    let webrtc_state = self.webrtc_state.clone();
-                    pad.set_event_function(move |_pad, _parent, event| {
-                        let structure = event.structure().unwrap();
-                        if structure.name() == "GstEventCaps" {
-                            let structure = structure
-                                .get::<gst::Caps>("caps")
-                                .unwrap();
-
-                            let structure = structure.structure(0).unwrap();
-
-                            let mime = structure.name();
-
-                            let sample_rate: i32 = structure.get("rate").unwrap();
-                            let duration = Duration::from_millis(((1.0 / sample_rate as f64)  * 1000.0).round() as u64);
-
-                            let stream_id = match {
-                                let state = state.lock().unwrap();
-                                state
-                                    .as_ref()
-                                    .unwrap()
-                                    .audio_state
-                                    .get(&id)
-                                    .unwrap()
-                                    .to_owned()
-                            } {
-                                MediaState::IdConfigured(id) => id,
-                                _ => unreachable!()
-                            };
-
-                            let track = Arc::new(TrackLocalStaticSample::new(
-                                RTCRtpCodecCapability { 
-                                    mime_type: MediaType::from_str(mime).expect("Failed to parse mime type").webrtc_mime().to_string(), 
-                                    ..RTCRtpCodecCapability::default()
-                                }, 
-                                "audio".to_string(), 
-                                stream_id
-                            ));
-                            
-                            // Add track to connection
-                            let webrtc_state = webrtc_state.clone();
-                            let audio = track.clone();
-                            let rtp_sender = RUNTIME.block_on(async move {
-                                webrtc_state.lock().unwrap().as_ref().unwrap().peer_connection.as_ref().unwrap().add_track(Arc::clone(&audio) as Arc<dyn TrackLocal + Send + Sync>).await
-                            }).expect("Failed to add track");
-
-                            thread::spawn(move || {
-                                RUNTIME.block_on(async move {
-                                    let mut rtcp_buf = vec![0u8; 1500];
-                                    while let Ok((_, _)) = rtp_sender.read(&mut rtcp_buf).await {}
-                                    anyhow::Result::<()>::Ok(())
-                                })
-                            });
-                            
-                            state.lock().unwrap().as_mut().unwrap().audio_state.insert(
-                                id,
-                                MediaState::Configured { track, duration },
-                            );
-
-                            debug!(CAT, "Audio media type set to: {}", mime);
-                        }
-                        true
-                    });
-
-                    let chain_state = self.state.clone();
-                    let last_sample_timestamp: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
-                    pad.set_chain_function(move |_pad, _parent, buffer| {
-                        let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
-                        trace!(CAT, "Audio map size: {}", map.size());
-                        let chain_state = chain_state.lock().unwrap();
-                        let (track, duration) = match chain_state.as_ref().unwrap().audio_state.get(&id).unwrap() {
-                            MediaState::Configured { track, duration} => (track, duration.to_owned()),
-                            _ => return Ok(gst::FlowSuccess::Ok)
-                        };
-
-                        let diff_duration = if let Some(last) = last_sample_timestamp.lock().unwrap().as_ref() {
-                            Instant::now() - *last
-                        } else {
-                            Duration::from_millis(0)
-                        };
-
-                        RUNTIME.block_on(async move {
-                            track.write_sample(&Sample {
-                                data: Bytes::copy_from_slice(map.as_slice()),
-                                duration: Duration::from_millis((duration.as_millis() * diff_duration.as_millis()).try_into().unwrap()),
-                                ..Sample::default()
-                            }).await
-                        }).expect("Failed to write sample");
-
-                        let _ = last_sample_timestamp.lock().unwrap().insert(Instant::now());
-
-                        Ok(gst::FlowSuccess::Ok)
-                    });
-                }
-                element.add_pad(&pad).unwrap();
-
-                state
-                    .audio_state
-                    .insert(state.next_audio_pad_id, MediaState::NotConfigured);
-                state.next_audio_pad_id += 1;
-
-                Some(pad)
-            }
-            _ => {
-                debug!(CAT, obj: element, "Requested pad is not audio or video");
-                None
-            }
-        }
-    }
-
-    fn release_pad(&self, element: &Self::Type, pad: &gst::Pad) {
-        if let None = self.state.lock().unwrap().as_ref() {
-            return;
-        }
-
-        let name = pad.name();
-        let split = name.split('_').collect::<Vec<_>>();
-        let id: usize = split[1].parse().unwrap();
-        if split[0] == "video" {
-            self.state
-                .lock()
-                .unwrap()
-                .as_mut()
-                .unwrap()
-                .video_state
-                .remove(&id);
+        let name = if templ.name().starts_with("video_") {
+            let name = format!("video_{}", state.next_video_pad_id);
+            state.next_video_pad_id += 1;
+            name
         } else {
-            self.state
-                .lock()
-                .unwrap()
-                .as_mut()
-                .unwrap()
-                .audio_state
-                .remove(&id);
+            let name = format!("audio_{}", state.next_audio_pad_id);
+            state.next_audio_pad_id += 1;
+            name
         };
 
-        self.parent_release_pad(element, pad);
+        let sink_pad = gst::GhostPad::builder_with_template(templ, Some(name.as_str()))
+            .event_function(|pad, parent, event| {
+                WebRtcRedux::catch_panic_pad_function(
+                    parent,
+                    || false,
+                    |sink, element| sink.sink_event(pad.upcast_ref(), element, event),
+                )
+            })
+            .build();
+
+        sink_pad.set_active(true).unwrap();
+        sink_pad.use_fixed_caps();
+        element.add_pad(&sink_pad).unwrap();
+
+        state.streams.insert(
+            name,
+            InputStream {
+                sink_pad: sink_pad.clone(),
+                sender: None,
+            },
+        );
+
+        Some(sink_pad.upcast())
     }
 
-    fn provide_clock(&self, _element: &Self::Type) -> Option<gst::Clock> {
-        Some(gst::SystemClock::obtain())
-    }
-}
-
-impl GstObjectImpl for WebRtcRedux {}
-
-impl BaseSinkImpl for WebRtcRedux {
-    fn start(&self, _sink: &Self::Type) -> Result<(), ErrorMessage> {
-        // Make sure all pads are configured with a stream ID
-        for (key, val) in self.state.lock().unwrap().as_mut().unwrap().audio_state.iter_mut().filter(|(_, val)| match **val { MediaState::NotConfigured => true, _ => false }) {
-            fixme!(CAT, "Using pad name as stream_id for audio pad {}, consider setting before pipeline starts", key);
-            *val = val.add_id(&format!("audio_{}", key));
+    fn change_state(
+        &self,
+        element: &Self::Type,
+        transition: gst::StateChange,
+    ) -> Result<gst::StateChangeSuccess, gst::StateChangeError> {
+        if let gst::StateChange::ReadyToPaused = transition {
+            if let Err(err) = self.prepare(element) {
+                gst::element_error!(
+                    element,
+                    gst::StreamError::Failed,
+                    ["Failed to prepare: {}", err]
+                );
+                return Err(gst::StateChangeError);
+            }
         }
 
-        for (key, val) in self.state.lock().unwrap().as_mut().unwrap().video_state.iter_mut().filter(|(_, val)| match **val { MediaState::NotConfigured => true, _ => false }) {
-            fixme!(CAT, "Using pad name as stream_id for video pad {}, consider setting before pipeline starts", key);
-            *val = val.add_id(&format!("video_{}", key));
-        }
+        let mut ret = self.parent_change_state(element, transition);
 
-        let peer_connection = match self.webrtc_settings.lock().unwrap().config.take() {
-            Some(config) => {
-                //Acquiring lock before the future instead of cloning because we need to return a value which is dropped with it.
-                let mut webrtc_state_lock = self.webrtc_state.lock().unwrap();
-                let webrtc_state = webrtc_state_lock.as_mut().unwrap();
+        match transition {
+            gst::StateChange::NullToReady => {
+                match self.webrtc_settings.lock().unwrap().config.take() {
+                    Some(config) => {
+                        //Acquiring lock before the future instead of cloning because we need to return a value which is dropped with it.
+                        let webrtc_state = self.webrtc_state.clone();
 
-                let future = async move {
-                    webrtc_state
-                        .api
-                        .new_peer_connection(config)
-                        .await
-                        .map_err(|e| {
-                            gst::error_msg!(
-                                gst::ResourceError::Failed,
-                                ["Failed to create PeerConnection: {:?}", e]
-                            )
-                        })
-                };
+                        {
+                            let (tx, rx) = oneshot::channel();
+                            let mut state = self.state.lock().unwrap();
+                            let _ = state.on_all_tracks_added_send.insert(tx);
+                            let _ = state.on_all_tracks_added.insert(rx);
+                        }
 
-                match self.wait(future) {
-                    Ok(peer_connection) => peer_connection,
-                    Err(e) => {
-                        return Err(e.unwrap_or_else(|| {
-                            gst::error_msg!(
-                                gst::ResourceError::Failed,
-                                ["Failed to wait for PeerConnection"]
-                            )
-                        }))
+                        let handle = self.runtime_handle();
+                        let inner = handle.clone();
+                        
+                        block_on(async move {
+                            handle.spawn_blocking(move || {
+                                inner.block_on(async move {
+                                    let mut webrtc_state = webrtc_state.lock().await;
+                                    //TODO: Fix mutex with an async safe mutex
+                                    let peer_connection = webrtc_state
+                                        .api
+                                        .new_peer_connection(config)
+                                        .await
+                                        .map_err(|e| {
+                                            gst::error_msg!(
+                                                gst::ResourceError::Failed,
+                                                ["Failed to create PeerConnection: {:?}", e]
+                                            )
+                                        });
+        
+                                    match peer_connection {
+                                        Ok(conn) => {
+                                            let _ = webrtc_state.peer_connection.insert(conn);
+                                            Ok(())
+                                        },
+                                        Err(e) => Err(e)
+                                    }
+                                }).unwrap();
+                            }).await
+                        }).unwrap();
+                    }
+                    None => {
+                        return Err(gst::StateChangeError);
                     }
                 }
             }
-            None => {
-                return Err(gst::error_msg!(
-                    gst::LibraryError::Settings,
-                    ["WebRTC configuration not set"]
-                ));
+            gst::StateChange::PausedToReady => {
+                if let Err(err) = self.unprepare(element) {
+                    gst::element_error!(
+                        element,
+                        gst::StreamError::Failed,
+                        ["Failed to unprepare: {}", err]
+                    );
+                    return Err(gst::StateChangeError);
+                }
             }
-        };
+            gst::StateChange::ReadyToNull => {
+                //Acquiring lock before the future instead of cloning because we need to return a value which is dropped with it.
+                let webrtc_state = self.webrtc_state.clone();
 
-        self.webrtc_state
-            .lock()
-            .unwrap()
-            .as_mut()
-            .unwrap()
-            .peer_connection = Some(peer_connection);
+                let handle = self.runtime_handle();
+                let inner = handle.clone();
 
-        info!(CAT, "Started");
-        Ok(())
-    }
-
-    fn stop(&self, _sink: &Self::Type) -> Result<(), ErrorMessage> {
-        //Drop states
-        self.state.lock().unwrap().take();
-        self.webrtc_state.lock().unwrap().take();
-        info!(CAT, "Stopped");
-        Ok(())
-    }
-
-    fn unlock(&self, _sink: &Self::Type) -> Result<(), ErrorMessage> {
-        let canceller = self.canceller.lock().unwrap();
-        if let Some(ref canceller) = *canceller {
-            canceller.abort();
+                block_on(async move {
+                    handle.spawn_blocking(move || {
+                        inner.block_on(async move {
+                            let mut webrtc_state = webrtc_state.lock().await;
+                            //TODO: Fix mutex with an async safe mutex
+                            if let Some(conn) = webrtc_state.peer_connection.take() {
+                                conn.close().await
+                            } else {
+                                Ok(())
+                            }
+                        })
+                    }).await
+                }).unwrap().unwrap();
+            }
+            gst::StateChange::ReadyToPaused => {
+                ret = Ok(gst::StateChangeSuccess::NoPreroll);
+            }
+            _ => (),
         }
-        Ok(())
+
+        ret
     }
 }
+
+//TODO: Add signals
+impl ObjectImpl for WebRtcRedux {}
+
+impl GstObjectImpl for WebRtcRedux {}
+
+impl BinImpl for WebRtcRedux {}
