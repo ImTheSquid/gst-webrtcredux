@@ -879,7 +879,7 @@ dependencies = [
 
 [[package]]
 name = "gst-plugin-webrtcredux"
-version = "0.2.1"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -908,6 +908,7 @@ dependencies = [
  "webrtc-sctp 0.5.0",
  "webrtc-srtp",
  "webrtc-util",
+ "xcb 1.1.1",
 ]
 
 [[package]]
@@ -1597,6 +1598,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c278e965f1d8cf32d6e0e96de3d3e79712178ae67986d9cf9151f51e95aac89b"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "quick-xml"
+version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8533f14c8382aaad0d592c812ac3b826162128b65662331e1127b45c3d18536b"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
@@ -2652,7 +2662,7 @@ version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "89bd49c06c9eb5d98e6ba6536cf64ac9f7ee3a009b2f53996d405b3944f6bcea"
 dependencies = [
- "xcb",
+ "xcb 0.8.2",
 ]
 
 [[package]]
@@ -2710,6 +2720,17 @@ checksum = "5e917a3f24142e9ff8be2414e36c649d47d6cc2ba81f16201cdef96e533e02de"
 dependencies = [
  "libc",
  "log",
+]
+
+[[package]]
+name = "xcb"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b127bf5bfe9dbb39118d6567e3773d4bbc795411a8e1ef7b7e056bccac0011a9"
+dependencies = [
+ "bitflags",
+ "libc",
+ "quick-xml",
 ]
 
 [[package]]
