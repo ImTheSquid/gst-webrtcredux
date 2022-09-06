@@ -32,6 +32,8 @@ use webrtc::peer_connection::configuration::RTCConfiguration;
 pub use webrtc::peer_connection::offer_answer_options::RTCAnswerOptions;
 pub use webrtc::peer_connection::offer_answer_options::RTCOfferOptions;
 use webrtc::peer_connection::{RTCPeerConnection, OnNegotiationNeededHdlrFn, OnICEConnectionStateChangeHdlrFn, OnPeerConnectionStateChangeHdlrFn};
+pub use webrtc::peer_connection::policy::bundle_policy::RTCBundlePolicy;
+pub use webrtc::peer_connection::policy::sdp_semantics::RTCSdpSemantics;
 pub use webrtc::peer_connection::sdp::sdp_type::RTCSdpType;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
@@ -237,6 +239,32 @@ impl WebRtcRedux {
             }
             None => {
                 error!(CAT, "Trying to add ice servers after starting");
+            }
+        }
+    }
+
+    pub fn set_bundle_policy(&self, bundle_policy: RTCBundlePolicy) {
+        let mut webrtc_settings = self.webrtc_settings.lock().unwrap();
+
+        match webrtc_settings.config {
+            Some(ref mut config) => {
+                config.bundle_policy = bundle_policy;
+            }
+            None => {
+                error!(CAT, "Trying to set bundle policy after starting");
+            }
+        }
+    }
+
+    pub fn set_sdp_semantics(&self, sdp_semantics: RTCSdpSemantics) {
+        let mut webrtc_settings = self.webrtc_settings.lock().unwrap();
+
+        match webrtc_settings.config {
+            Some(ref mut config) => {
+                config.sdp_semantics = sdp_semantics;
+            }
+            None => {
+                error!(CAT, "Trying to set sdp semantics after starting");
             }
         }
     }

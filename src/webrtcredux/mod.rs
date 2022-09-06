@@ -37,6 +37,14 @@ impl WebRtcRedux {
         imp::WebRtcRedux::from_instance(self).add_ice_servers(ice_servers);
     }
 
+    pub fn set_bundle_policy(&self, bundle_policy: RTCBundlePolicy) {
+        imp::WebRtcRedux::from_instance(self).set_bundle_policy(bundle_policy);
+    }
+
+    pub fn set_sdp_semantics(&self, sdp_semantics: RTCSdpSemantics) {
+        imp::WebRtcRedux::from_instance(self).set_sdp_semantics(sdp_semantics);
+    }
+
     pub fn set_stream_id(&self, pad_name: &str, stream_id: &str) -> Result<(), ErrorMessage> {
         imp::WebRtcRedux::from_instance(self).set_stream_id(pad_name, stream_id)
     }
