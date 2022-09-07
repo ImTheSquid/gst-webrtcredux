@@ -25,10 +25,10 @@ strum = "0.24"
 strum_macros = "0.24"
 futures = "0.3.21"
 tokio = { version = "1.20.0", default-features = false, features = ["time", "rt-multi-thread"] }
-webrtc = "0.4.0"
-webrtc-media = "*"
-interceptor = "*"
-webrtc-util = "*"
+webrtc = { git = "https://github.com/webrtc-rs/webrtc" }
+webrtc-media = { git = "https://github.com/webrtc-rs/webrtc" }
+interceptor = { git = "https://github.com/webrtc-rs/webrtc" }
+webrtc-util = { git = "https://github.com/webrtc-rs/webrtc" }
 bytes = "1.2.0"
 anyhow = "1.0.58"
 
