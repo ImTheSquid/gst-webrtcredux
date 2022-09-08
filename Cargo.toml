@@ -1,6 +1,6 @@
 [package]
 name = "gst-plugin-webrtcredux"
-version = "0.3.2"
+version = "0.4.0"
 edition = "2021"
 repository = "https://github.com/ImTheSquid/gst-webrtcredux"
 homepage = "https://github.com/ImTheSquid/gst-webrtcredux"
@@ -25,10 +25,10 @@ strum = "0.24"
 strum_macros = "0.24"
 futures = "0.3.21"
 tokio = { version = "1.20.0", default-features = false, features = ["time", "rt-multi-thread"] }
-webrtc = { git = "https://github.com/webrtc-rs/webrtc" }
-webrtc-media = { git = "https://github.com/webrtc-rs/webrtc" }
-interceptor = { git = "https://github.com/webrtc-rs/webrtc" }
-webrtc-util = { git = "https://github.com/webrtc-rs/webrtc" }
+webrtc = "0.5.0"
+webrtc-media = "*"
+interceptor = "*"
+webrtc-util = "*"
 bytes = "1.2.0"
 anyhow = "1.0.58"
 
