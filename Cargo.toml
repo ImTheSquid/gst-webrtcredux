@@ -32,6 +32,8 @@ webrtc-util = "*"
 bytes = "1.2.0"
 anyhow = "1.0.58"
 
+async-trait = "0.1.57"
+
 [lib]
 name = "webrtcredux"
 crate-type = ["cdylib", "rlib"]

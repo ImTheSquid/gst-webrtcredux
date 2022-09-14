@@ -6,7 +6,9 @@ use futures::Future;
 use futures::executor::block_on;
 use tokio::sync::{Mutex as AsyncMutex, oneshot};
 
+use async_trait::async_trait;
 use anyhow::{Context, Error};
+use bytes::Bytes;
 use gst::{
     gst_debug as debug,
     gst_error as error,
@@ -17,6 +19,9 @@ use gst::{
 use gst::{ErrorMessage, glib, prelude::*, traits::{ElementExt, GstObjectExt}};
 use gst_video::subclass::prelude::*;
 use interceptor::registry::Registry;
+use interceptor::report::sender::SenderReport;
+use interceptor::{Attributes, Interceptor, InterceptorBuilder, RTCPReader, RTCPWriter, RTPReader, RTPWriter};
+use interceptor::stream_info::StreamInfo;
 use once_cell::sync::Lazy;
 use strum_macros::EnumString;
 use tokio::runtime::{self, Handle};
@@ -36,9 +41,13 @@ pub use webrtc::peer_connection::policy::bundle_policy::RTCBundlePolicy;
 pub use webrtc::peer_connection::policy::sdp_semantics::RTCSdpSemantics;
 pub use webrtc::peer_connection::sdp::sdp_type::RTCSdpType;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
-use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
+use webrtc::rtp;
+use webrtc::rtp::extension::audio_level_extension::AudioLevelExtension;
+use webrtc::rtp_transceiver::rtp_codec::{RTCRtpCodecCapability, RTCRtpHeaderExtensionCapability, RTPCodecType};
 use webrtc::track::track_local::TrackLocal;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
+use webrtc_util::Marshal;
+use webrtc_util::sync::RwLock;
 use crate::sdp::LineEnding;
 use crate::webrtcredux::sender::WebRtcReduxSender;
 
@@ -154,13 +163,98 @@ struct WebRtcState {
     peer_connection: Option<RTCPeerConnection>
 }
 
+struct RTPHeaderMunger {
+    rtp_writer: Arc<dyn RTPWriter + Send + Sync>,
+}
+
+#[async_trait]
+impl RTPWriter for RTPHeaderMunger {
+    async fn write(&self, pkt: &rtp::packet::Packet, attributes: &Attributes) -> Result<usize, interceptor::Error> {
+        // Do stuff to pkt(you'll need to clone)
+        let mut new_pkt = pkt.clone();
+
+        let ext = AudioLevelExtension {
+            level: 20,
+            voice: true
+        };
+
+        new_pkt.header.set_extension(2, ext.marshal().unwrap()).expect("Failed to Munge RTP Header");
+
+        self.rtp_writer.write(&new_pkt, attributes).await
+    }
+}
+
+#[derive(Default)]
+struct MungerInterceptor { send_streams: Mutex<HashMap<u32, Arc<RTPHeaderMunger>>> }
+
+#[async_trait]
+impl Interceptor for MungerInterceptor {
+    async fn bind_local_stream(&self, info: &StreamInfo, writer: Arc<dyn RTPWriter + Send + Sync>) -> Arc<dyn RTPWriter + Send + Sync> {
+        let mut lock = self.send_streams.lock().unwrap();
+
+        let e = lock.entry(info.ssrc).or_insert_with(|| Arc::new(RTPHeaderMunger { rtp_writer: writer.clone() }));
+
+        e.clone()
+    }
+
+    async fn unbind_local_stream(&self, info: &StreamInfo) {
+        let mut lock = self.send_streams.lock().unwrap();
+
+        lock.remove(&info.ssrc);
+    }
+
+    async fn bind_rtcp_writer(&self, writer: Arc<dyn RTCPWriter + Send + Sync>) -> Arc<dyn RTCPWriter + Send + Sync> {
+        writer
+    }
+
+    async fn bind_remote_stream(&self, info: &StreamInfo, reader: Arc<dyn RTPReader + Send + Sync>) -> Arc<dyn RTPReader + Send + Sync> {
+        reader
+    }
+
+    async fn bind_rtcp_reader(&self, reader: Arc<dyn RTCPReader + Send + Sync>) -> Arc<dyn RTCPReader + Send + Sync> {
+        reader
+    }
+
+    async fn unbind_remote_stream(&self, info: &StreamInfo) {}
+
+    async fn close(&self) -> Result<(), interceptor::Error> {
+        Ok(())
+    }
+}
+
+struct RTPHeaderMungerBuilder;
+
+impl InterceptorBuilder for RTPHeaderMungerBuilder {
+    fn build(&self, _id: &str) -> Result<Arc<dyn Interceptor + Send + Sync>, interceptor::Error> {
+        Ok(Arc::new(MungerInterceptor::default()))
+    }
+}
+
 impl Default for WebRtcState {
     fn default() -> Self {
         let mut media_engine = MediaEngine::default();
         media_engine.register_default_codecs().expect("Failed to register default codecs");
+
+        for extension in [
+            "urn:ietf:params:rtp-hdrext:ssrc-audio-level",
+            "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time",
+            "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01",
+            "urn:ietf:params:rtp-hdrext:sdes:mid"
+        ] {
+            media_engine.register_header_extension(
+                RTCRtpHeaderExtensionCapability {
+                    uri: extension.to_owned(),
+                },
+                RTPCodecType::Audio,
+                vec![],
+            ).expect("Failed to register header extension");
+        }
+
         let mut registry = Registry::new();
         registry = register_default_interceptors(registry, &mut media_engine)
             .expect("Failed to register default interceptors");
+
+        registry.add(Box::new(RTPHeaderMungerBuilder));
 
         WebRtcState {
             api: APIBuilder::new()

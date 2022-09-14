@@ -924,6 +924,7 @@ name = "gst-plugin-webrtcredux"
 version = "0.4.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "bytes",
  "futures",
  "gst-plugin-version-helper",
