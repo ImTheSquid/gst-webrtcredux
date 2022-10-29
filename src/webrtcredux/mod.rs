@@ -18,6 +18,8 @@ use webrtc::ice_transport::ice_gatherer::OnLocalCandidateHdlrFn;
 use webrtc::peer_connection::OnICEConnectionStateChangeHdlrFn;
 use webrtc::peer_connection::OnNegotiationNeededHdlrFn;
 use webrtc::peer_connection::OnPeerConnectionStateChangeHdlrFn;
+use webrtc::rtp_transceiver::RTCRtpTransceiverInit;
+use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
 
 use self::sdp::SDP;
 pub mod sdp;
@@ -53,6 +55,16 @@ impl WebRtcRedux {
         imp::WebRtcRedux::from_instance(self).set_stream_id(pad_name, stream_id)
     }
 
+    pub async fn add_transceiver(
+        &self,
+        codec_type: RTPCodecType,
+        init_params: &[RTCRtpTransceiverInit]) -> Result<Arc<RTCRtpTransceiver>, ErrorMessage>
+    {
+        imp::WebRtcRedux::from_instance(self)
+            .add_transceiver_from_kind(codec_type, init_params)
+            .await
+    }
+
     pub async fn create_offer(
         &self,
         options: Option<RTCOfferOptions>,
@@ -83,6 +95,10 @@ impl WebRtcRedux {
         imp::WebRtcRedux::from_instance(self)
             .set_local_description(sdp, sdp_type)
             .await
+    }
+
+    pub async fn remote_description(&self) -> Result<Option<SDP>, ErrorMessage> {
+        imp::WebRtcRedux::from_instance(self).remote_description().await
     }
 
     pub async fn set_remote_description(&self, sdp: &SDP, sdp_type: RTCSdpType) -> Result<(), ErrorMessage> {

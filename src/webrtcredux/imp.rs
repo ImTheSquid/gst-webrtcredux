@@ -38,7 +38,8 @@ pub use webrtc::peer_connection::policy::bundle_policy::RTCBundlePolicy;
 pub use webrtc::peer_connection::policy::sdp_semantics::RTCSdpSemantics;
 pub use webrtc::peer_connection::sdp::sdp_type::RTCSdpType;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
-use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
+pub use webrtc::rtp_transceiver::{RTCRtpTransceiverInit, RTCRtpTransceiver};
+pub use webrtc::rtp_transceiver::rtp_codec::{RTCRtpCodecCapability, RTPCodecType};
 use webrtc::track::track_local::TrackLocal;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
 use crate::sdp::LineEnding;
@@ -431,6 +432,24 @@ impl WebRtcRedux {
         }
     }
 
+    pub async fn add_transceiver_from_kind(
+        &self,
+        codec_type: RTPCodecType,
+        init_params: &[RTCRtpTransceiverInit]
+    ) -> Result<Arc<RTCRtpTransceiver>, ErrorMessage> {
+        let webrtc_state = self.webrtc_state.lock().await;
+        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
+
+        match peer_connection.add_transceiver_from_kind(codec_type, init_params).await
+        {
+            Ok(res) => Ok(res),
+            Err(e) => Err(gst::error_msg!(
+                gst::ResourceError::Failed,
+                [&format!("Failed to create transceiver: {:?}", e)]
+            )),
+        }
+    }
+
     pub async fn gathering_complete_promise(&self) -> Result<tokio::sync::mpsc::Receiver<()>, ErrorMessage> {
         let webrtc_state = self.webrtc_state.lock().await;
         let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
@@ -496,6 +515,16 @@ impl WebRtcRedux {
         }
 
         Ok(())
+    }
+
+    pub async fn remote_description(&self) -> Result<Option<SDP>, ErrorMessage> {
+        let webrtc_state = self.webrtc_state.lock().await;
+        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
+
+        match peer_connection.remote_description().await {
+            None => Ok(None),
+            Some(res) => Ok(Some(SDP::from_str(&res.sdp).unwrap()))
+        }
     }
 
     pub async fn set_remote_description(&self, sdp: &SDP, sdp_type: RTCSdpType) -> Result<(), ErrorMessage> {
