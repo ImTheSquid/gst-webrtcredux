@@ -23,6 +23,8 @@ use tokio::runtime::{self, Handle};
 use webrtc::api::{API, APIBuilder};
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::{MediaEngine, MIME_TYPE_G722, MIME_TYPE_H264, MIME_TYPE_OPUS, MIME_TYPE_PCMA, MIME_TYPE_PCMU, MIME_TYPE_VP8, MIME_TYPE_VP9};
+pub use webrtc::data_channel::RTCDataChannel;
+pub use webrtc::data_channel::data_channel_init::RTCDataChannelInit;
 pub use webrtc::ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit};
 pub use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
 use webrtc::ice_transport::ice_gatherer::{OnLocalCandidateHdlrFn, OnICEGathererStateChangeHdlrFn};
@@ -588,6 +590,24 @@ impl WebRtcRedux {
         }
 
         Ok(())
+    }
+
+    pub async fn create_data_channel(&self,
+        name: &str,
+        init_params: Option<RTCDataChannelInit>
+    ) -> Result<Arc<RTCDataChannel>, ErrorMessage> {
+        let webrtc_state = self.webrtc_state.lock().await;
+        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
+
+        match peer_connection.create_data_channel(name, init_params).await {
+            Ok(res) => Ok(res),
+            Err(e) => {
+                Err(gst::error_msg!(
+                    gst::ResourceError::Failed,
+                    [&format!("Failed to create data channel: {:?}", e)]
+                ))
+            }
+        }
     }
 
     pub fn set_tokio_runtime(

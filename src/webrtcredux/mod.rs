@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use gst::glib;
 use gst::prelude::*;
 use gst::subclass::prelude::ObjectSubclassExt;
@@ -9,6 +11,8 @@ mod imp;
 
 pub use imp::*;
 use tokio::runtime::Handle;
+use webrtc::data_channel::RTCDataChannel;
+use webrtc::data_channel::data_channel_init::RTCDataChannelInit;
 use webrtc::ice_transport::ice_gatherer::OnICEGathererStateChangeHdlrFn;
 use webrtc::ice_transport::ice_gatherer::OnLocalCandidateHdlrFn;
 use webrtc::peer_connection::OnICEConnectionStateChangeHdlrFn;
@@ -128,6 +132,12 @@ impl WebRtcRedux {
     ) -> Result<(), ErrorMessage> {
         imp::WebRtcRedux::from_instance(self)
             .add_ice_candidate(candidate)
+            .await
+    }
+
+    pub async fn create_data_channel(&self, name: &str, init_params: Option<RTCDataChannelInit>) -> Result<Arc<RTCDataChannel>, ErrorMessage> {
+        imp::WebRtcRedux::from_instance(self)
+            .create_data_channel(name, init_params)
             .await
     }
 
