@@ -23,6 +23,8 @@ use tokio::runtime::{self, Handle};
 use webrtc::api::{API, APIBuilder};
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::{MediaEngine, MIME_TYPE_G722, MIME_TYPE_H264, MIME_TYPE_OPUS, MIME_TYPE_PCMA, MIME_TYPE_PCMU, MIME_TYPE_VP8, MIME_TYPE_VP9};
+pub use webrtc::data_channel::RTCDataChannel;
+pub use webrtc::data_channel::data_channel_init::RTCDataChannelInit;
 pub use webrtc::ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit};
 pub use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
 use webrtc::ice_transport::ice_gatherer::{OnLocalCandidateHdlrFn, OnICEGathererStateChangeHdlrFn};
@@ -36,7 +38,8 @@ pub use webrtc::peer_connection::policy::bundle_policy::RTCBundlePolicy;
 pub use webrtc::peer_connection::policy::sdp_semantics::RTCSdpSemantics;
 pub use webrtc::peer_connection::sdp::sdp_type::RTCSdpType;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
-use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
+pub use webrtc::rtp_transceiver::{RTCRtpTransceiverInit, RTCRtpTransceiver};
+pub use webrtc::rtp_transceiver::rtp_codec::{RTCRtpCodecCapability, RTPCodecType};
 use webrtc::track::track_local::TrackLocal;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
 use crate::sdp::LineEnding;
@@ -429,6 +432,24 @@ impl WebRtcRedux {
         }
     }
 
+    pub async fn add_transceiver_from_kind(
+        &self,
+        codec_type: RTPCodecType,
+        init_params: &[RTCRtpTransceiverInit]
+    ) -> Result<Arc<RTCRtpTransceiver>, ErrorMessage> {
+        let webrtc_state = self.webrtc_state.lock().await;
+        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
+
+        match peer_connection.add_transceiver_from_kind(codec_type, init_params).await
+        {
+            Ok(res) => Ok(res),
+            Err(e) => Err(gst::error_msg!(
+                gst::ResourceError::Failed,
+                [&format!("Failed to create transceiver: {:?}", e)]
+            )),
+        }
+    }
+
     pub async fn gathering_complete_promise(&self) -> Result<tokio::sync::mpsc::Receiver<()>, ErrorMessage> {
         let webrtc_state = self.webrtc_state.lock().await;
         let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
@@ -494,6 +515,16 @@ impl WebRtcRedux {
         }
 
         Ok(())
+    }
+
+    pub async fn remote_description(&self) -> Result<Option<SDP>, ErrorMessage> {
+        let webrtc_state = self.webrtc_state.lock().await;
+        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
+
+        match peer_connection.remote_description().await {
+            None => Ok(None),
+            Some(res) => Ok(Some(SDP::from_str(&res.sdp).unwrap()))
+        }
     }
 
     pub async fn set_remote_description(&self, sdp: &SDP, sdp_type: RTCSdpType) -> Result<(), ErrorMessage> {
@@ -588,6 +619,24 @@ impl WebRtcRedux {
         }
 
         Ok(())
+    }
+
+    pub async fn create_data_channel(&self,
+        name: &str,
+        init_params: Option<RTCDataChannelInit>
+    ) -> Result<Arc<RTCDataChannel>, ErrorMessage> {
+        let webrtc_state = self.webrtc_state.lock().await;
+        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
+
+        match peer_connection.create_data_channel(name, init_params).await {
+            Ok(res) => Ok(res),
+            Err(e) => {
+                Err(gst::error_msg!(
+                    gst::ResourceError::Failed,
+                    [&format!("Failed to create data channel: {:?}", e)]
+                ))
+            }
+        }
     }
 
     pub fn set_tokio_runtime(

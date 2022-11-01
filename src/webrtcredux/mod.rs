@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use gst::glib;
 use gst::prelude::*;
 use gst::subclass::prelude::ObjectSubclassExt;
@@ -9,11 +11,15 @@ mod imp;
 
 pub use imp::*;
 use tokio::runtime::Handle;
+use webrtc::data_channel::RTCDataChannel;
+use webrtc::data_channel::data_channel_init::RTCDataChannelInit;
 use webrtc::ice_transport::ice_gatherer::OnICEGathererStateChangeHdlrFn;
 use webrtc::ice_transport::ice_gatherer::OnLocalCandidateHdlrFn;
 use webrtc::peer_connection::OnICEConnectionStateChangeHdlrFn;
 use webrtc::peer_connection::OnNegotiationNeededHdlrFn;
 use webrtc::peer_connection::OnPeerConnectionStateChangeHdlrFn;
+use webrtc::rtp_transceiver::RTCRtpTransceiverInit;
+use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
 
 use self::sdp::SDP;
 pub mod sdp;
@@ -49,6 +55,16 @@ impl WebRtcRedux {
         imp::WebRtcRedux::from_instance(self).set_stream_id(pad_name, stream_id)
     }
 
+    pub async fn add_transceiver(
+        &self,
+        codec_type: RTPCodecType,
+        init_params: &[RTCRtpTransceiverInit]) -> Result<Arc<RTCRtpTransceiver>, ErrorMessage>
+    {
+        imp::WebRtcRedux::from_instance(self)
+            .add_transceiver_from_kind(codec_type, init_params)
+            .await
+    }
+
     pub async fn create_offer(
         &self,
         options: Option<RTCOfferOptions>,
@@ -79,6 +95,10 @@ impl WebRtcRedux {
         imp::WebRtcRedux::from_instance(self)
             .set_local_description(sdp, sdp_type)
             .await
+    }
+
+    pub async fn remote_description(&self) -> Result<Option<SDP>, ErrorMessage> {
+        imp::WebRtcRedux::from_instance(self).remote_description().await
     }
 
     pub async fn set_remote_description(&self, sdp: &SDP, sdp_type: RTCSdpType) -> Result<(), ErrorMessage> {
@@ -128,6 +148,12 @@ impl WebRtcRedux {
     ) -> Result<(), ErrorMessage> {
         imp::WebRtcRedux::from_instance(self)
             .add_ice_candidate(candidate)
+            .await
+    }
+
+    pub async fn create_data_channel(&self, name: &str, init_params: Option<RTCDataChannelInit>) -> Result<Arc<RTCDataChannel>, ErrorMessage> {
+        imp::WebRtcRedux::from_instance(self)
+            .create_data_channel(name, init_params)
             .await
     }
 
