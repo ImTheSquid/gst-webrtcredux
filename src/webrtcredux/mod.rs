@@ -30,7 +30,7 @@ glib::wrapper! {
 
 impl Default for WebRtcRedux {
     fn default() -> Self {
-        glib::Object::new(&[]).unwrap()
+        glib::Object::new::<Self>(&[])
     }
 }
 

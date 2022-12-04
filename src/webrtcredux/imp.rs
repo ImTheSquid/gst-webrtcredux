@@ -7,14 +7,7 @@ use futures::executor::block_on;
 use tokio::sync::{Mutex as AsyncMutex, oneshot};
 
 use anyhow::{Context, Error};
-use gst::{
-    gst_debug as debug,
-    gst_error as error,
-    gst_info as info,
-    gst_fixme as fixme,
-    EventView, EventRef
-};
-use gst::{ErrorMessage, glib, prelude::*, traits::{ElementExt, GstObjectExt}};
+use gst::{debug, error, info, fixme, ErrorMessage, glib, prelude::*, traits::{ElementExt, GstObjectExt}, EventView};
 use gst_video::subclass::prelude::*;
 use interceptor::registry::Registry;
 use once_cell::sync::Lazy;
@@ -118,8 +111,9 @@ struct InputStream {
     sender: Option<WebRtcReduxSender>,
 }
 
-pub fn make_element(element: &str, name: Option<&str>) -> Result<gst::Element, Error> {
-    gst::ElementFactory::make(element, name)
+pub fn make_element(element: &str) -> Result<gst::Element, Error> {
+    gst::ElementFactory::make(element)
+        .build()
         .with_context(|| format!("Failed to make element {}", element))
 }
 
@@ -260,16 +254,13 @@ impl WebRtcRedux {
     }
 
     fn sink_event(&self, pad: &gst::Pad, element: &super::WebRtcRedux, event: gst::Event) -> bool {
-        match event.view() {
-            EventView::Caps(caps) => {
-                self.create_track(&pad.name(), &caps);
-                pad.event_default(Some(element), event)
-            },
-            _ => pad.event_default(Some(element), event)
+        if let EventView::Caps(caps) = event.view() {
+            self.create_track(&pad.name(), caps);
         }
+        gst::Pad::event_default(pad, Some(element), event)
     }
 
-    fn create_track(&self, name: &str, caps: &gst::event::Caps<&EventRef>) {
+    fn create_track(&self, name: &str, caps: &gst::event::Caps) {
         let name_parts = name.split('_').collect::<Vec<_>>();
         let id: usize = name_parts[1].parse().unwrap();
 
@@ -708,12 +699,11 @@ impl ElementImpl for WebRtcRedux {
 
     fn request_new_pad(
         &self,
-        element: &Self::Type,
         templ: &gst::PadTemplate,
-        _name: Option<String>,
+        _name: Option<&str>,
         _caps: Option<&gst::Caps>,
     ) -> Option<gst::Pad> {
-        //
+        let element = self.obj();
         if element.current_state() > gst::State::Ready {
             error!(CAT, "element pads can only be requested before starting");
             return None;
@@ -736,7 +726,7 @@ impl ElementImpl for WebRtcRedux {
                 WebRtcRedux::catch_panic_pad_function(
                     parent,
                     || false,
-                    |sink, element| sink.sink_event(pad.upcast_ref(), element, event),
+                    |this| this.sink_event(pad.upcast_ref(), &this.obj(), event),
                 )
             })
             .build();
@@ -758,11 +748,11 @@ impl ElementImpl for WebRtcRedux {
 
     fn change_state(
         &self,
-        element: &Self::Type,
         transition: gst::StateChange,
     ) -> Result<gst::StateChangeSuccess, gst::StateChangeError> {
+        let element = self.obj();
         if let gst::StateChange::ReadyToPaused = transition {
-            if let Err(err) = self.prepare(element) {
+            if let Err(err) = self.prepare(&element) {
                 gst::element_error!(
                     element,
                     gst::StreamError::Failed,
@@ -772,7 +762,7 @@ impl ElementImpl for WebRtcRedux {
             }
         }
 
-        let mut ret = self.parent_change_state(element, transition);
+        let mut ret = self.parent_change_state(transition);
 
         match transition {
             gst::StateChange::NullToReady => {
@@ -824,7 +814,7 @@ impl ElementImpl for WebRtcRedux {
                 }
             }
             gst::StateChange::PausedToReady => {
-                if let Err(err) = self.unprepare(element) {
+                if let Err(err) = self.unprepare(&element) {
                     gst::element_error!(
                         element,
                         gst::StreamError::Failed,

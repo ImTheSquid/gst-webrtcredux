@@ -55,10 +55,10 @@ enum AudioEncoder {
 impl GstEncoder for AudioEncoder {
     fn to_gst_encoder(&self) -> Result<Element, BoolError> {
         match self {
-            AudioEncoder::Opus => gst::ElementFactory::make("opusenc", None),
-            AudioEncoder::Mulaw => gst::ElementFactory::make("mulawenc", None),
-            AudioEncoder::Alaw => gst::ElementFactory::make("alawenc", None),
-            AudioEncoder::G722 => gst::ElementFactory::make("avenc_g722", None),
+            AudioEncoder::Opus => gst::ElementFactory::make("opusenc").build(),
+            AudioEncoder::Mulaw => gst::ElementFactory::make("mulawenc").build(),
+            AudioEncoder::Alaw => gst::ElementFactory::make("alawenc").build(),
+            AudioEncoder::G722 => gst::ElementFactory::make("avenc_g722").build(),
         }
     }
 }
@@ -73,9 +73,9 @@ enum VideoEncoder {
 impl GstEncoder for VideoEncoder {
     fn to_gst_encoder(&self) -> Result<Element, BoolError> {
         match self {
-            VideoEncoder::H264 => gst::ElementFactory::make("x264enc", None),
-            VideoEncoder::VP8 => gst::ElementFactory::make("vp8enc", None),
-            VideoEncoder::VP9 => gst::ElementFactory::make("vp9enc", None),
+            VideoEncoder::H264 => gst::ElementFactory::make("x264enc").build(),
+            VideoEncoder::VP8 => gst::ElementFactory::make("vp8enc").build(),
+            VideoEncoder::VP9 => gst::ElementFactory::make("vp9enc").build(),
         }
     }
 }
@@ -155,8 +155,8 @@ fn pipeline_creation_test(encoders: Vec<Encoder>) {
 
     for encoder_to_use in &encoders {
         let src = match encoder_to_use {
-            Encoder::Audio(_) => gst::ElementFactory::make("audiotestsrc", None).unwrap(),
-            Encoder::Video(_) => gst::ElementFactory::make("videotestsrc", None).unwrap(),
+            Encoder::Audio(_) => gst::ElementFactory::make("audiotestsrc").build().unwrap(),
+            Encoder::Video(_) => gst::ElementFactory::make("videotestsrc").build().unwrap(),
         };
 
         let encoder = encoder_to_use.to_gst_encoder().unwrap();

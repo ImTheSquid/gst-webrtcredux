@@ -23,6 +23,6 @@ unsafe impl Send for WebRtcReduxSender {}
 
 impl Default for WebRtcReduxSender {
     fn default() -> Self {
-        glib::Object::new(&[]).unwrap()
+        glib::Object::new::<Self>(&[])
     }
 }

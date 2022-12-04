@@ -5,7 +5,7 @@ use bytes::Bytes;
 use futures::executor::block_on;
 use gst::prelude::ClockExtManual;
 use gst::traits::ClockExt;
-use gst::{Buffer, FlowError, FlowSuccess, glib, gst_trace as trace, ClockTime};
+use gst::{Buffer, FlowError, FlowSuccess, glib, trace, ClockTime};
 use gst::subclass::ElementMetadata;
 use gst::subclass::prelude::*;
 use gst_base::subclass::prelude::*;
@@ -83,19 +83,19 @@ impl ElementImpl for WebRtcReduxSender {
         PAD_TEMPLATES.as_ref()
     }
 
-    fn change_state(&self, element: &Self::Type, transition: gst::StateChange) -> Result<gst::StateChangeSuccess, gst::StateChangeError> {
+    fn change_state(&self, transition: gst::StateChange) -> Result<gst::StateChangeSuccess, gst::StateChangeError> {
         if transition == gst::StateChange::PausedToPlaying {
             if let Some(duration) = self.state.lock().unwrap().duration {
-                self.set_clock(element, Some(&format_clock(duration)));
+                self.set_clock(Some(&format_clock(duration)));
             }
         }
 
-        self.parent_change_state(element, transition)
+        self.parent_change_state(transition)
     }
 }
 
 impl BaseSinkImpl for WebRtcReduxSender {
-    fn render(&self, element: &Self::Type, buffer: &Buffer) -> Result<FlowSuccess, FlowError> {
+    fn render(&self, buffer: &Buffer) -> Result<FlowSuccess, FlowError> {
         let sample_duration = if *self.state.lock().unwrap().media_type.as_ref().unwrap() == MediaType::Video {
             Duration::from_secs(1)
         } else {
@@ -105,7 +105,7 @@ impl BaseSinkImpl for WebRtcReduxSender {
         // If the clock hasn't been set, set it from the buffer timestamp
         if self.state.lock().unwrap().duration.is_none() {
             let _ = self.state.lock().unwrap().duration.insert(buffer.duration().unwrap());
-            self.set_clock(element, Some(&format_clock(buffer.duration().unwrap())));
+            self.set_clock(Some(&format_clock(buffer.duration().unwrap())));
         }
 
         let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;

@@ -63,9 +63,9 @@ async fn main() -> Result<()> {
         .add(webrtcredux.upcast_ref::<gst::Element>())
         .expect("Failed to add webrtcredux to the pipeline");
 
-    let video_src = gst::ElementFactory::make("videotestsrc", None)?;
+    let video_src = gst::ElementFactory::make("videotestsrc").build()?;
 
-    let video_encoder = gst::ElementFactory::make("x264enc", None)?;
+    let video_encoder = gst::ElementFactory::make("x264enc").build()?;
 
     video_encoder.set_property("threads", 12u32);
     video_encoder.set_property("bitrate", 2048000_u32 / 1000);
@@ -83,12 +83,12 @@ async fn main() -> Result<()> {
 
     //webrtcredux.set_stream_id("video_0", "webrtc-rs")?;
 
-    let audio_src = gst::ElementFactory::make("audiotestsrc", None)?;
+    let audio_src = gst::ElementFactory::make("audiotestsrc").build()?;
 
     audio_src.set_property_from_str("wave", "ticks");
     audio_src.set_property_from_str("tick-interval", "500000000");
 
-    let audio_encoder = gst::ElementFactory::make("opusenc", None)?;
+    let audio_encoder = gst::ElementFactory::make("opusenc").build()?;
 
     pipeline.add_many(&[&audio_src, &audio_encoder])?;
 
