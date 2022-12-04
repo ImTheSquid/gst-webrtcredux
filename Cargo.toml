@@ -25,10 +25,8 @@ strum = "0.24"
 strum_macros = "0.24"
 futures = "0.3.21"
 tokio = { version = "1.20.0", default-features = false, features = ["time", "rt-multi-thread"] }
-webrtc = "0.5.0"
-webrtc-media = "0.4.7"
-interceptor = "0.8.0"
-webrtc-util = "0.6.0"
+webrtc = "0.6.0"
+interceptor = "*"
 bytes = "1.2.0"
 anyhow = "1.0.58"
 

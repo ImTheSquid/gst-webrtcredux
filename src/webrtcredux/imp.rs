@@ -259,19 +259,6 @@ impl WebRtcRedux {
         }
     }
 
-    pub fn set_sdp_semantics(&self, sdp_semantics: RTCSdpSemantics) {
-        let mut webrtc_settings = self.webrtc_settings.lock().unwrap();
-
-        match webrtc_settings.config {
-            Some(ref mut config) => {
-                config.sdp_semantics = sdp_semantics;
-            }
-            None => {
-                error!(CAT, "Trying to set sdp semantics after starting");
-            }
-        }
-    }
-
     fn sink_event(&self, pad: &gst::Pad, element: &super::WebRtcRedux, event: gst::Event) -> bool {
         match event.view() {
             EventView::Caps(caps) => {
@@ -551,8 +538,7 @@ impl WebRtcRedux {
         let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         peer_connection
-            .on_negotiation_needed(Box::new(f))
-            .await;
+            .on_negotiation_needed(Box::new(f));
 
         Ok(())
     }
@@ -563,8 +549,7 @@ impl WebRtcRedux {
         let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         peer_connection
-            .on_ice_candidate(Box::new(f))
-            .await;
+            .on_ice_candidate(Box::new(f));
 
         Ok(())
     }
@@ -575,8 +560,7 @@ impl WebRtcRedux {
         let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         peer_connection
-            .on_ice_gathering_state_change(Box::new(f))
-            .await;
+            .on_ice_gathering_state_change(Box::new(f));
 
         Ok(())
     }
@@ -587,8 +571,7 @@ impl WebRtcRedux {
         let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         peer_connection
-            .on_ice_connection_state_change(Box::new(f))
-            .await;
+            .on_ice_connection_state_change(Box::new(f));
 
         Ok(())
     }
@@ -598,8 +581,7 @@ impl WebRtcRedux {
         let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
 
         peer_connection
-            .on_peer_connection_state_change(Box::new(f))
-            .await;
+            .on_peer_connection_state_change(Box::new(f));
 
         Ok(())
     }

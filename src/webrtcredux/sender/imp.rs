@@ -11,8 +11,8 @@ use gst::subclass::prelude::*;
 use gst_base::subclass::prelude::*;
 use once_cell::sync::Lazy;
 use tokio::runtime::Handle;
+use webrtc::media::Sample;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
-use webrtc_media::Sample;
 
 use crate::webrtcredux::CAT;
 
