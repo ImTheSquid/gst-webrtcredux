@@ -20,15 +20,15 @@ gst-app = { package = "gstreamer-app", version = "0.18", features = ["v1_16"] }
 gst-base = { package = "gstreamer-base", version = "0.18", features = ["v1_16"] }
 gst-video = { package = "gstreamer-video", version = "0.18", features = ["v1_16"] }
 gst-audio = { package = "gstreamer-audio", version = "0.18", features = ["v1_16"] }
-once_cell = "1.0"
+once_cell = "1.16"
 strum = "0.24"
 strum_macros = "0.24"
-futures = "0.3.21"
-tokio = { version = "1.20.0", default-features = false, features = ["time", "rt-multi-thread"] }
+futures = "0.3.25"
+tokio = { version = "1.22.0", default-features = false, features = ["time", "rt-multi-thread"] }
 webrtc = "0.6.0"
 interceptor = "*"
-bytes = "1.2.0"
-anyhow = "1.0.58"
+bytes = "1.3.0"
+anyhow = "1.0.66"
 
 [lib]
 name = "webrtcredux"
