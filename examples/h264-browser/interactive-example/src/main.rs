@@ -90,9 +90,20 @@ async fn main() -> Result<()> {
 
     let audio_encoder = gst::ElementFactory::make("opusenc").build()?;
 
-    pipeline.add_many(&[&audio_src, &audio_encoder])?;
+    let audio_capsfilter = gst::ElementFactory::make("capsfilter").build()?;
 
-    Element::link_many(&[&audio_src, &audio_encoder])?;
+    //Create a vector containing the option of the gst caps
+    let caps_options: Vec<(&str, &(dyn ToSendValue + Sync))> =
+        vec![("channels", &2)];
+
+    audio_capsfilter.set_property(
+        "caps",
+        &gst::Caps::new_simple("audio/x-raw", caps_options.as_ref()),
+    );
+
+    pipeline.add_many(&[&audio_src, &audio_capsfilter, &audio_encoder])?;
+
+    Element::link_many(&[&audio_src, &audio_capsfilter, &audio_encoder])?;
 
     audio_encoder.link(webrtcredux.upcast_ref::<gst::Element>())?;
 
@@ -100,6 +111,7 @@ async fn main() -> Result<()> {
 
     let mut clipboard_handle = ClipboardContext::new().expect("Failed to create clipboard context");
 
+    println!("Copy remote description to your clipboard");
     pause().await;
 
     let line = clipboard_handle.get_contents().expect("Failed to get clipboard contents");

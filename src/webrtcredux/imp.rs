@@ -336,6 +336,7 @@ impl WebRtcRedux {
         {
             let mut state = self.state.lock().unwrap();
             if state.tracks == state.next_audio_pad_id + state.next_video_pad_id {
+                debug!(CAT, "All tracks added");
                 state.on_all_tracks_added_send.take().unwrap().send(()).unwrap();
             }
         }

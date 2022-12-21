@@ -26,7 +26,7 @@ strum_macros = "0.24"
 futures = "0.3.25"
 tokio = { version = "1.22.0", default-features = false, features = ["time", "rt-multi-thread"] }
 webrtc = "0.6.0"
-interceptor = "0.8.1"
+interceptor = "0.8.2"
 bytes = "1.3.0"
 anyhow = "1.0.66"
 
@@ -47,3 +47,6 @@ version = "1"
 
 [dependencies.webrtc-srtp]
 version = "0.9.0"
+
+[dependencies.rtcp]
+version = "0.7.2"
