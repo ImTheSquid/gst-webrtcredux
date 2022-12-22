@@ -122,7 +122,8 @@ impl BaseSinkImpl for WebRtcReduxSender {
         }
 
         let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
-        trace!(CAT, "Rendering {} bytes", map.size());
+        let media_type_str = if *self.state.lock().unwrap().media_type.as_ref().unwrap() == MediaType::Video { "VIDEO" } else { "AUDIO" };
+        trace!(CAT, "[{}] Rendering {} bytes for duration {} ms", media_type_str, map.size(), sample_duration.as_millis());
         let bytes = Bytes::copy_from_slice(map.as_slice());
 
         let handle = self.state.lock().unwrap().handle.as_ref().unwrap().clone();

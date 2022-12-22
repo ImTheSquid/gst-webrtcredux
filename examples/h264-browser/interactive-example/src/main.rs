@@ -133,6 +133,8 @@ async fn main() -> Result<()> {
     }))
         .await?;
 
+    webrtcredux.wait_for_all_tracks().await;
+
     webrtcredux.set_remote_description(&offer, RTCSdpType::Offer).await?;
 
     let answer = webrtcredux.create_answer(None).await?;

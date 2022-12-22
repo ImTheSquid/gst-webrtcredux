@@ -1008,7 +1008,6 @@ dependencies = [
  "gstreamer-video",
  "interceptor",
  "once_cell",
- "rtcp",
  "strum",
  "strum_macros",
  "tokio",
