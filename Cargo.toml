@@ -47,6 +47,3 @@ version = "1"
 
 [dependencies.webrtc-srtp]
 version = "0.9.0"
-
-[dependencies.rtcp]
-version = "0.7.2"
