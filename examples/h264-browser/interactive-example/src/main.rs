@@ -111,7 +111,7 @@ async fn main() -> Result<()> {
 
     let mut clipboard_handle = ClipboardContext::new().expect("Failed to create clipboard context");
 
-    println!("Copy remote description to your clipboard");
+    print!("Please copy remote description to your clipboard");
     pause().await;
 
     let line = clipboard_handle.get_contents().expect("Failed to get clipboard contents");
@@ -124,7 +124,7 @@ async fn main() -> Result<()> {
         println!("Peer connection state has changed {}", state);
 
         Box::pin(async {})
-    })).await?;
+    }))?;
 
     webrtcredux.on_ice_connection_state_change(Box::new(move |connection_state: RTCIceConnectionState| {
         println!("Connection State has changed {}", connection_state);
@@ -146,7 +146,7 @@ async fn main() -> Result<()> {
     if let Ok(Some(local_desc)) = webrtcredux.local_description().await {
         let b64 = base64::encode(local_desc.to_string(LF));
         clipboard_handle.set_contents(b64.clone()).expect("Failed to set clipboard contents");
-        println!("Base64 Session Description for the browser copied to the cliboard", );
+        println!("Base64 Session Description for the browser copied to the clipboard", );
         println!("{}", b64);
     } else {
         println!("generate local_description failed!");

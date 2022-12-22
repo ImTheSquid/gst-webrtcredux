@@ -4,8 +4,8 @@ use std::time::Duration;
 use bytes::Bytes;
 use futures::executor::block_on;
 use gst::prelude::ClockExtManual;
-use gst::traits::ClockExt;
-use gst::{Buffer, FlowError, FlowSuccess, glib, trace, ClockTime};
+use gst::traits::{ClockExt, ElementExt};
+use gst::{Buffer, FlowError, FlowSuccess, glib, trace, ClockTime, debug, error};
 use gst::subclass::ElementMetadata;
 use gst::subclass::prelude::*;
 use gst_base::subclass::prelude::*;
@@ -27,20 +27,30 @@ struct State {
     track: Option<Arc<TrackLocalStaticSample>>,
     duration: Option<ClockTime>,
     handle: Option<Handle>,
-    media_type: Option<MediaType>
+    media_type: Option<MediaType>,
+    async_complete: bool
 }
 
 #[derive(Default)]
 pub struct WebRtcReduxSender {
-    state: Mutex<State>,
+    state: Arc<Mutex<State>>,
 }
 
 impl WebRtcReduxSender {
-    pub fn add_info(&self, track: Arc<TrackLocalStaticSample>, handle: Handle, media_type: MediaType, duration: Option<ClockTime>) {
+    pub fn add_info(&self, track: Arc<TrackLocalStaticSample>, handle: Handle, media_type: MediaType, duration: Option<ClockTime>, on_connect: tokio::sync::oneshot::Receiver<()>) {
         let _ = self.state.lock().unwrap().track.insert(track);
-        let _ = self.state.lock().unwrap().handle.insert(handle);
         let _ = self.state.lock().unwrap().media_type.insert(media_type);
         self.state.lock().unwrap().duration = duration;
+
+        let instance = self.instance().clone();
+        let state = self.state.clone();
+        handle.spawn(async move {
+            if on_connect.await.is_err() { error!(CAT, "Error waiting for peer connection"); return; }
+            state.lock().unwrap().async_complete = true;
+            debug!(CAT, "Peer connection successful, finishing async transition");
+            instance.change_state(gst::StateChange::PausedToPlaying).unwrap();
+        });
+        let _ = self.state.lock().unwrap().handle.insert(handle);
     }
 }
 
@@ -88,8 +98,11 @@ impl ElementImpl for WebRtcReduxSender {
             if let Some(duration) = self.state.lock().unwrap().duration {
                 self.set_clock(Some(&format_clock(duration)));
             }
-        }
 
+            if !self.state.lock().unwrap().async_complete {
+                return Ok(gst::StateChangeSuccess::Async);
+            }
+        }
         self.parent_change_state(transition)
     }
 }

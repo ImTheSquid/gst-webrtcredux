@@ -14,8 +14,8 @@ glib::wrapper! {
 }
 
 impl WebRtcReduxSender {
-    pub fn add_info(&self, track: Arc<TrackLocalStaticSample>, handle: Handle, media_type: MediaType, duration: Option<ClockTime>) {
-        imp::WebRtcReduxSender::from_instance(self).add_info(track, handle, media_type, duration);
+    pub fn add_info(&self, track: Arc<TrackLocalStaticSample>, handle: Handle, media_type: MediaType, duration: Option<ClockTime>, on_connect: tokio::sync::oneshot::Receiver<()>) {
+        imp::WebRtcReduxSender::from_instance(self).add_info(track, handle, media_type, duration, on_connect);
     }
 }
 

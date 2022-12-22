@@ -26,6 +26,7 @@ pub use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 pub use webrtc::peer_connection::offer_answer_options::RTCAnswerOptions;
 pub use webrtc::peer_connection::offer_answer_options::RTCOfferOptions;
+use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::{RTCPeerConnection, OnNegotiationNeededHdlrFn, OnICEConnectionStateChangeHdlrFn, OnPeerConnectionStateChangeHdlrFn};
 pub use webrtc::peer_connection::policy::bundle_policy::RTCBundlePolicy;
 pub use webrtc::peer_connection::policy::sdp_semantics::RTCSdpSemantics;
@@ -179,6 +180,8 @@ struct State {
     handle: Option<Handle>,
     on_all_tracks_added_send: Option<oneshot::Sender<()>>,
     on_all_tracks_added: Option<oneshot::Receiver<()>>,
+    on_peer_connection_send: Arc<Mutex<Option<Vec<oneshot::Sender<()>>>>>,
+    on_peer_connection_fn: Arc<Mutex<Option<OnPeerConnectionStateChangeHdlrFn>>>,
     tracks: usize
 }
 
@@ -330,7 +333,9 @@ impl WebRtcRedux {
 
         // Moving this out of the add_info call fixed a lockup, I'm not gonna question why
         let handle = self.runtime_handle();
-        self.state.lock().unwrap().streams.get(name).unwrap().sender.as_ref().unwrap().add_info(track, handle, media_type, duration);
+        let (tx, rx) = oneshot::channel::<()>();
+        self.state.lock().unwrap().on_peer_connection_send.lock().unwrap().get_or_insert(vec![]).push(tx);
+        self.state.lock().unwrap().streams.get(name).unwrap().sender.as_ref().unwrap().add_info(track, handle, media_type, duration, rx);
 
         self.state.lock().unwrap().tracks += 1;
         {
@@ -568,12 +573,10 @@ impl WebRtcRedux {
         Ok(())
     }
 
-    pub async fn on_peer_connection_state_change(&self, f: OnPeerConnectionStateChangeHdlrFn) -> Result<(), ErrorMessage> {
-        let webrtc_state = self.webrtc_state.lock().await;
-        let peer_connection = WebRtcRedux::get_peer_connection(&webrtc_state)?;
-
-        peer_connection
-            .on_peer_connection_state_change(Box::new(f));
+    pub fn on_peer_connection_state_change(&self, f: OnPeerConnectionStateChangeHdlrFn) -> Result<(), ErrorMessage> {
+        // peer_connection
+        //     .on_peer_connection_state_change(Box::new(f));
+        let _ = self.state.lock().unwrap().on_peer_connection_fn.lock().unwrap().insert(f);
 
         Ok(())
     }
@@ -771,6 +774,8 @@ impl ElementImpl for WebRtcRedux {
                     Some(config) => {
                         //Acquiring lock before the future instead of cloning because we need to return a value which is dropped with it.
                         let webrtc_state = self.webrtc_state.clone();
+                        let on_pc_send = self.state.lock().unwrap().on_peer_connection_send.clone();
+                        let on_pc_fn = self.state.lock().unwrap().on_peer_connection_fn.clone();
 
                         {
                             let (tx, rx) = oneshot::channel();
@@ -800,7 +805,23 @@ impl ElementImpl for WebRtcRedux {
         
                                     match peer_connection {
                                         Ok(conn) => {
+                                            conn.on_peer_connection_state_change(Box::new(move |state| {
+                                                // Notify sender elements when peer is connected
+                                                if state == RTCPeerConnectionState::Connected {
+                                                    if let Some(vec) = on_pc_send.lock().unwrap().take() {
+                                                        for send in vec.into_iter() {
+                                                            send.send(()).unwrap();
+                                                        }
+                                                    }
+                                                }
+
+                                                // Run user-defined callback function if it exists
+                                                let mut on_pc_fn = on_pc_fn.lock().unwrap();
+                                                if on_pc_fn.is_some() {on_pc_fn.as_mut().unwrap()(state)} else {Box::pin(async {})}
+                                            }));
+
                                             let _ = webrtc_state.peer_connection.insert(conn);
+
                                             Ok(())
                                         },
                                         Err(e) => Err(e)

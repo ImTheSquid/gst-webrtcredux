@@ -131,11 +131,10 @@ impl WebRtcRedux {
             .await
     }
 
-    pub async fn on_peer_connection_state_change(&self, f: OnPeerConnectionStateChangeHdlrFn) -> Result<(), ErrorMessage>
+    pub fn on_peer_connection_state_change(&self, f: OnPeerConnectionStateChangeHdlrFn) -> Result<(), ErrorMessage>
     {
         imp::WebRtcRedux::from_instance(self)
             .on_peer_connection_state_change(f)
-            .await
     }
 
     pub async fn add_ice_candidate(
